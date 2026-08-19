@@ -101,11 +101,13 @@ type KiroEvent = {
 };
 export declare function parseKiroEvent(payload: unknown): KiroEvent | undefined;
 export declare function buildKiroRequest(model: Model<Api>, context: Context, profileArn: string, conversationId: string, reasoning?: SimpleStreamOptions["reasoning"]): KiroRequest;
-export declare function parseStructuredApiKey(apiKey: string | undefined): {
+/** Structured Kiro API key: bearer token plus optional region and profile ARN. */
+export interface StructuredKiroApiKey {
     token: string;
     region?: string;
     profileArn?: string;
-};
+}
+export declare function parseStructuredApiKey(apiKey: string | undefined): StructuredKiroApiKey;
 export declare function fetchKiroModelsForCredential(credential: {
     access: string;
     region?: string;

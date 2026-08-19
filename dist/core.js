@@ -1431,6 +1431,7 @@ export {
   parseStructuredApiKey,
   parseKiroEvent,
   mapKiroCatalogToProviderModelConfigs,
+  managementRequest,
   kiroOAuth,
   getKiroRegionFromEndpoint,
   getKiroEndpoints,

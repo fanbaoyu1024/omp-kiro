@@ -83,7 +83,8 @@ export class KiroManagementHttpError extends Error {
 	}
 }
 
-async function managementRequest<TResponse>(
+/** @internal Shared by model-catalog and usage lookups; not part of the public plugin surface. */
+export async function managementRequest<TResponse>(
 	auth: KiroManagementAuth,
 	operation: string,
 	path: string,

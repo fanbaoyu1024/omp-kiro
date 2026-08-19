@@ -1428,12 +1428,106 @@ function createKiroProviderConfig() {
   };
 }
 
+// src/usage.ts
+function toFiniteNumber(value) {
+  if (typeof value === "number")
+    return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return;
+}
+function toOptionalString(value) {
+  if (typeof value === "string")
+    return value.length > 0 ? value : undefined;
+  if (typeof value === "number" && Number.isFinite(value))
+    return String(value);
+  return;
+}
+function normalizeResetDate(value) {
+  const numeric = toFiniteNumber(value);
+  if (numeric !== undefined) {
+    const date = new Date(numeric < 1000000000000 ? numeric * 1000 : numeric);
+    if (!Number.isNaN(date.getTime()))
+      return date.toISOString().slice(0, 10);
+  }
+  return toOptionalString(value);
+}
+async function fetchKiroUsage(auth, providedProfileArn, fetchFn = globalThis.fetch, signal) {
+  const profileArn = await resolveKiroProfileArn(auth, providedProfileArn, fetchFn, signal);
+  const response = await managementRequest(auth, "GetUsageLimits", "getUsageLimits", "GET", { origin: "AI_EDITOR", resourceType: "AGENTIC_REQUEST", profileArn }, fetchFn, signal);
+  const credit = response.usageBreakdownList?.find((item) => item?.resourceType === "CREDIT");
+  if (!credit) {
+    throw new Error(`Kiro management GetUsageLimits returned no credit breakdown in ${auth.region}`);
+  }
+  const usedCredits = toFiniteNumber(credit.currentUsageWithPrecision) ?? toFiniteNumber(credit.currentUsage);
+  const totalCredits = toFiniteNumber(credit.usageLimitWithPrecision) ?? toFiniteNumber(credit.usageLimit);
+  if (usedCredits === undefined || totalCredits === undefined) {
+    throw new Error(`Kiro management GetUsageLimits returned an invalid credit breakdown in ${auth.region}`);
+  }
+  return {
+    usedCredits,
+    totalCredits,
+    remainingCredits: Math.max(totalCredits - usedCredits, 0),
+    percentUsed: totalCredits > 0 ? usedCredits / totalCredits * 100 : 0,
+    nextReset: normalizeResetDate(credit.nextDateReset) ?? normalizeResetDate(response.nextDateReset),
+    subscriptionTitle: toOptionalString(response.subscriptionInfo?.subscriptionTitle)
+  };
+}
+function formatCredits(value) {
+  return String(Math.round(value * 100) / 100);
+}
+function formatKiroUsage(snapshot) {
+  const lines = [
+    snapshot.subscriptionTitle ?? "Kiro credits",
+    `Used ${formatCredits(snapshot.usedCredits)} of ${formatCredits(snapshot.totalCredits)} credits (${formatCredits(snapshot.percentUsed)}%)`,
+    `Remaining ${formatCredits(snapshot.remainingCredits)} credits`
+  ];
+  if (snapshot.nextReset)
+    lines.push(`Resets ${snapshot.nextReset}`);
+  return lines.join(`
+`);
+}
+
 // src/extension.ts
+var KIRO_USAGE_COMMAND = "kiro-usage";
+function redactKiroCredentials(message, structured) {
+  if (!structured)
+    return message;
+  const redacted = message.split(structured.token).join("[redacted]");
+  return structured.profileArn ? redacted.split(structured.profileArn).join("[redacted]") : redacted;
+}
+async function handleKiroUsageCommand(_args, ctx) {
+  let structured;
+  try {
+    const apiKey = await ctx.modelRegistry.getApiKeyForProvider(KIRO_PROVIDER_ID);
+    structured = parseStructuredApiKey(apiKey);
+    if (!structured.token) {
+      ctx.ui.notify("Kiro credentials not set. Run /login kiro first.", "error");
+      return;
+    }
+    const snapshot = await fetchKiroUsage({
+      accessToken: structured.token,
+      region: resolveKiroApiRegion(structured.region)
+    }, structured.profileArn);
+    ctx.ui.notify(formatKiroUsage(snapshot), "info");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.ui.notify(`Kiro usage lookup failed: ${redactKiroCredentials(message, structured)}`, "error");
+  }
+}
 function registerKiro(pi) {
   pi.registerProvider(KIRO_PROVIDER_ID, createKiroProviderConfig());
+  pi.registerCommand(KIRO_USAGE_COMMAND, {
+    description: "Show Kiro credits usage and next reset date",
+    handler: handleKiroUsageCommand
+  });
 }
 export {
+  handleKiroUsageCommand,
   registerKiro as default,
   createKiroProviderConfig,
+  KIRO_USAGE_COMMAND,
   KIRO_PROVIDER_ID
 };

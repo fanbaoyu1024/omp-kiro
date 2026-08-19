@@ -510,12 +510,14 @@ function findHeader(
 		undefined
 	);
 }
-
-export function parseStructuredApiKey(apiKey: string | undefined): {
+/** Structured Kiro API key: bearer token plus optional region and profile ARN. */
+export interface StructuredKiroApiKey {
 	token: string;
 	region?: string;
 	profileArn?: string;
-} {
+}
+
+export function parseStructuredApiKey(apiKey: string | undefined): StructuredKiroApiKey {
 	if (!apiKey?.startsWith("{")) return { token: apiKey ?? "" };
 	try {
 		const parsed = JSON.parse(apiKey) as {

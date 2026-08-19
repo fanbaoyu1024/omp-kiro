@@ -1,7 +1,7 @@
 {
 	"name": "omp-kiro",
-	"version": "1.0.1",
-	"description": "Kiro OAuth provider for Oh My Pi using the current kiro.dev runtime and management APIs.",
+	"version": "1.1.0",
+	"description": "Kiro OAuth, credits usage, model discovery, and streaming runtime for Oh My Pi.",
 	"type": "module",
 	"license": "MIT",
 	"author": "Fan Baoyu",
@@ -22,7 +22,7 @@
 	],
 	"omp": {
 		"name": "Kiro (AWS Builder ID / IAM Identity Center plugin)",
-		"description": "Kiro (AWS) provider with IAM Identity Center / Builder ID device-code login and profile-scoped model discovery.",
+		"description": "Kiro provider with device-code login, credits usage, profile-scoped model discovery, and streaming runtime.",
 		"extensions": [
 			"./dist/extension.js"
 		]

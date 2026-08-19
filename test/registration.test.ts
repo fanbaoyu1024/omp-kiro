@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "bun:test";
-import registerKiro from "../src/extension.ts";
+import registerKiro, {
+	handleKiroUsageCommand,
+	KIRO_USAGE_COMMAND,
+} from "../src/extension.ts";
 import { createKiroProviderConfig, KIRO_PROVIDER_ID } from "../src/provider.ts";
 
 describe("omp extension registration", () => {
 	it("registers the kiro provider with a two-argument registerProvider call", () => {
 		const registerProvider = vi.fn();
-		registerKiro({ registerProvider } as never);
+		const registerCommand = vi.fn();
+		registerKiro({ registerProvider, registerCommand } as never);
 
 		expect(registerProvider).toHaveBeenCalledTimes(1);
 		const [name, config] = registerProvider.mock.calls[0] as [
@@ -47,5 +51,44 @@ describe("omp extension registration", () => {
 		expect(config.models).toBeUndefined();
 		expect(config.oauth?.name).toBe("Kiro (AWS Builder ID / IAM Identity Center plugin)");
 		expect(config.baseUrl).toContain("kiro.dev");
+	});
+});
+
+describe("kiro-usage command", () => {
+	it("registers the kiro-usage command exactly once with a description and callable handler", () => {
+		const registerProvider = vi.fn();
+		const registerCommand = vi.fn();
+		registerKiro({ registerProvider, registerCommand } as never);
+
+		expect(registerProvider).toHaveBeenCalledTimes(1);
+		expect(registerCommand).toHaveBeenCalledTimes(1);
+		const [name, options] = registerCommand.mock.calls[0] as [
+			string,
+			{ description?: string; handler?: unknown },
+		];
+		expect(name).toBe("kiro-usage");
+		expect(KIRO_USAGE_COMMAND).toBe("kiro-usage");
+		expect(typeof options.description).toBe("string");
+		expect((options.description as string).length).toBeGreaterThan(0);
+		expect(options.handler).toBe(handleKiroUsageCommand);
+	});
+
+	it("prompts for /login kiro via an error notification when no credential is stored", async () => {
+		const getApiKeyForProvider = vi.fn().mockResolvedValue(undefined);
+		const notify = vi.fn();
+		const ctx = {
+			modelRegistry: { getApiKeyForProvider },
+			ui: { notify },
+		} as never;
+
+		await handleKiroUsageCommand("", ctx);
+
+		expect(getApiKeyForProvider).toHaveBeenCalledTimes(1);
+		expect(getApiKeyForProvider).toHaveBeenCalledWith("kiro");
+		expect(notify).toHaveBeenCalledTimes(1);
+		expect(notify.mock.calls[0][0]).toBe(
+			"Kiro credentials not set. Run /login kiro first.",
+		);
+		expect(notify.mock.calls[0][1]).toBe("error");
 	});
 });
