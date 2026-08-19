@@ -16,12 +16,14 @@ import type {
 } from "@oh-my-pi/pi-ai";
 import { createAssistantMessageEventStream } from "./assistant-stream.ts";
 import {
+	KIRO_MODELS,
 	mapKiroCatalogToProviderModelConfigs,
 	type KiroProviderModelConfig,
 } from "./catalog.ts";
 import { decodeKiroEventStream } from "./eventstream.ts";
 import {
 	fetchKiroModelCatalog,
+	getKiroEndpoints,
 	getKiroRegionFromEndpoint,
 	type KiroCatalogModel,
 	resolveKiroApiRegion,
@@ -672,13 +674,21 @@ export async function fetchKiroModelsForCredential(
 		globalThis.fetch,
 		signal,
 	);
-	return mapKiroCatalogToProviderModelConfigs(
+	const discovered = mapKiroCatalogToProviderModelConfigs(
 		response.models as readonly KiroCatalogModel[],
 		region,
 	).map((model) => ({
 		...model,
 		headers: { ...model.headers, "x-amzn-kiro-profile-arn": profileArn },
 	}));
+	const discoveredIds = new Set(discovered.map((model) => model.id));
+	const runtime = getKiroEndpoints(region).runtime;
+	const fallback = KIRO_MODELS.filter((model) => !discoveredIds.has(model.id)).map((model) => ({
+		...model,
+		baseUrl: runtime,
+		headers: { ...model.headers, "x-amzn-kiro-profile-arn": profileArn },
+	}));
+	return [...discovered, ...fallback];
 }
 
 export function streamKiro(

@@ -507,7 +507,7 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 		expect(KIRO_MODELS.length).toBe(models.length);
 	});
 
-	it("queries the profile-scoped management catalog when authenticated with a structured key", async () => {
+	it("merges a partial profile catalog without dropping omitted Claude bootstrap models", async () => {
 		const requests: string[] = [];
 		const fetchMock: FetchImpl = async (input) => {
 			const url = String(input);
@@ -518,8 +518,8 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 			return jsonResponse({
 				models: [
 					{
-						modelId: "fixture-model",
-						displayName: "Fixture Model",
+						modelId: "glm-5",
+						displayName: "GLM 5 Dynamic",
 						tokenLimits: { maxInputTokens: 1234, maxOutputTokens: 567 },
 						additionalModelRequestFieldsSchema: {
 							properties: {
@@ -548,9 +548,10 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 			"https://management.eu-central-1.kiro.dev/List-Available-Models",
 		);
 		expect(requests[0]).toContain("profileArn=profile-fixture");
+		expect(models).toHaveLength(KIRO_MODELS.length);
 		expect(models[0]).toMatchObject({
-			id: "fixture-model",
-			name: "Fixture Model",
+			id: "glm-5",
+			name: "GLM 5 Dynamic",
 			contextWindow: 1234,
 			maxTokens: 567,
 		});
@@ -561,6 +562,7 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 		expect((models[0]?.thinking as ThinkingConfig | undefined)?.mode).toBe(
 			"effort",
 		);
+		expect(models.some((model) => model.id === "claude-sonnet-4.5")).toBe(true);
 	});
 });
 

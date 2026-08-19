@@ -1,6 +1,6 @@
 {
 	"name": "omp-kiro",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Kiro OAuth provider for Oh My Pi using the current kiro.dev runtime and management APIs.",
 	"type": "module",
 	"license": "MIT",

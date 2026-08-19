@@ -23,8 +23,9 @@ export type KiroProviderModelConfig = ProviderModelConfig & {
     baseUrl: string;
 };
 /**
- * Kiro's management catalog is account/profile scoped, so these models are only
- * a safe bootstrap. A successful List-Available-Models response replaces them.
+ * Kiro's management catalog is account/profile scoped, so these models are a
+ * safe bootstrap. Successful List-Available-Models results override matching
+ * entries while omitted bootstrap models remain available.
  */
 export declare const KIRO_MODELS: readonly KiroProviderModelConfig[];
 /**

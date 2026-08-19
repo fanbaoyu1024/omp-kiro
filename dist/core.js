@@ -1238,10 +1238,18 @@ function emitToolCall(output, stream, call) {
 async function fetchKiroModelsForCredential(credential, signal) {
   const region = resolveKiroApiRegion(credential.region);
   const { profileArn, response } = await fetchKiroModelCatalog({ accessToken: credential.access, region }, credential.profileArn, globalThis.fetch, signal);
-  return mapKiroCatalogToProviderModelConfigs(response.models, region).map((model) => ({
+  const discovered = mapKiroCatalogToProviderModelConfigs(response.models, region).map((model) => ({
     ...model,
     headers: { ...model.headers, "x-amzn-kiro-profile-arn": profileArn }
   }));
+  const discoveredIds = new Set(discovered.map((model) => model.id));
+  const runtime = getKiroEndpoints(region).runtime;
+  const fallback = KIRO_MODELS.filter((model) => !discoveredIds.has(model.id)).map((model) => ({
+    ...model,
+    baseUrl: runtime,
+    headers: { ...model.headers, "x-amzn-kiro-profile-arn": profileArn }
+  }));
+  return [...discovered, ...fallback];
 }
 function streamKiro(model, context, options = {}) {
   const stream = createAssistantMessageEventStream();
