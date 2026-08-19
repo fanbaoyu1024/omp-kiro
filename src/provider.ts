@@ -3,9 +3,14 @@ import { KIRO_API, KIRO_MODELS } from "./catalog.ts";
 import { kiroOAuth } from "./oauth.ts";
 import { getKiroEndpoints } from "./shared.ts";
 import { fetchKiroModelsForCredential, parseStructuredApiKey, streamKiro } from "./stream.ts";
-import { kiroUsageProvider } from "./usage.ts";
+import { kiroUsageProvider, type KiroUsageProvider } from "./usage.ts";
 /** Canonical provider id used to replace or extend the host Kiro provider. */
 export const KIRO_PROVIDER_ID = "kiro" as const;
+
+/** Provider config compatible with older hosts that ignore the additive `usage` field. */
+export interface KiroProviderConfig extends ProviderConfig {
+	usage: KiroUsageProvider;
+}
 
 /**
  * Build the OMP `ProviderConfig` registered under `kiro`.
@@ -16,7 +21,7 @@ export const KIRO_PROVIDER_ID = "kiro" as const;
  * The bootstrap/authenticated switch therefore lives inside `fetchDynamicModels`,
  * keyed on the resolved API key (undefined when unauthenticated).
  */
-export function createKiroProviderConfig(): ProviderConfig {
+export function createKiroProviderConfig(): KiroProviderConfig {
 	return {
 		baseUrl: getKiroEndpoints("us-east-1").runtime,
 		api: KIRO_API,

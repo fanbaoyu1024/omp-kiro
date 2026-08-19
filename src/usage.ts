@@ -3,7 +3,6 @@ import type {
 	UsageFetchContext,
 	UsageFetchParams,
 	UsageLimit,
-	UsageProvider,
 	UsageReport,
 	UsageStatus,
 } from "@oh-my-pi/pi-ai";
@@ -148,6 +147,23 @@ export function formatKiroUsage(snapshot: KiroUsageSnapshot): string {
 
 const KIRO_PROVIDER = "kiro";
 
+/** Compatibility shape for OMP releases before `credits` joined UsageUnit. */
+export type KiroCreditLimit = Omit<UsageLimit, "amount"> & {
+	amount: Omit<UsageLimit["amount"], "unit"> & { unit: "credits" };
+};
+
+export interface KiroUsageReport extends Omit<UsageReport, "limits"> {
+	limits: KiroCreditLimit[];
+}
+
+/** Structural equivalent of the extension UsageProvider contract added upstream. */
+export interface KiroUsageProvider {
+	id: string;
+	fetchUsage(params: UsageFetchParams, ctx: UsageFetchContext): Promise<KiroUsageReport | null>;
+	supports?(params: UsageFetchParams): boolean;
+	validatesCredentials?: boolean;
+}
+
 /** Extract the Identity Center region encoded in the refresh token tail (`<refresh>|<clientId>|<clientSecret>|idc|<region>`). */
 function resolveRegionFromRefreshToken(refreshToken: string | undefined): string | undefined {
 	if (!refreshToken) return undefined;
@@ -182,7 +198,7 @@ function usageStatusFor(usedFraction: number | undefined): UsageStatus {
 export async function fetchKiroUsageReport(
 	params: UsageFetchParams,
 	ctx: UsageFetchContext,
-): Promise<UsageReport | null> {
+): Promise<KiroUsageReport | null> {
 	if (!supportsKiroUsage(params)) return null;
 	const credential = params.credential;
 	const accessToken = credential.accessToken?.trim();
@@ -214,7 +230,7 @@ export async function fetchKiroUsageReport(
 	const used = snapshot.usedCredits;
 	const total = snapshot.totalCredits;
 	const usedFraction = total > 0 ? used / total : undefined;
-	const limit: UsageLimit = {
+	const limit: KiroCreditLimit = {
 		id: "credits",
 		label: "Credits",
 		scope: {
@@ -262,7 +278,7 @@ export async function fetchKiroUsageReport(
  * field so the host `/usage` surfaces and `omp usage --provider kiro` report
  * the Kiro credits quota.
  */
-export const kiroUsageProvider: UsageProvider = {
+export const kiroUsageProvider: KiroUsageProvider = {
 	id: KIRO_PROVIDER,
 	supports: supportsKiroUsage,
 	validatesCredentials: true,

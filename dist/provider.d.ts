@@ -1,6 +1,11 @@
 import type { ProviderConfig } from "@oh-my-pi/pi-coding-agent";
+import { type KiroUsageProvider } from "./usage.ts";
 /** Canonical provider id used to replace or extend the host Kiro provider. */
 export declare const KIRO_PROVIDER_ID: "kiro";
+/** Provider config compatible with older hosts that ignore the additive `usage` field. */
+export interface KiroProviderConfig extends ProviderConfig {
+    usage: KiroUsageProvider;
+}
 /**
  * Build the OMP `ProviderConfig` registered under `kiro`.
  *
@@ -10,5 +15,5 @@ export declare const KIRO_PROVIDER_ID: "kiro";
  * The bootstrap/authenticated switch therefore lives inside `fetchDynamicModels`,
  * keyed on the resolved API key (undefined when unauthenticated).
  */
-export declare function createKiroProviderConfig(): ProviderConfig;
+export declare function createKiroProviderConfig(): KiroProviderConfig;
 //# sourceMappingURL=provider.d.ts.map
