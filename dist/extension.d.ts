@@ -5,4 +5,5 @@ export declare const KIRO_USAGE_COMMAND: "kiro-usage";
 export declare function handleKiroUsageCommand(_args: string, ctx: ExtensionCommandContext): Promise<void>;
 export default function registerKiro(pi: ExtensionAPI): void;
 export { createKiroProviderConfig, KIRO_PROVIDER_ID } from "./provider.ts";
+export { kiroUsageProvider } from "./usage.ts";
 //# sourceMappingURL=extension.d.ts.map

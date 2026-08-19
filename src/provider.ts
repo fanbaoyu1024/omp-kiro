@@ -3,7 +3,7 @@ import { KIRO_API, KIRO_MODELS } from "./catalog.ts";
 import { kiroOAuth } from "./oauth.ts";
 import { getKiroEndpoints } from "./shared.ts";
 import { fetchKiroModelsForCredential, parseStructuredApiKey, streamKiro } from "./stream.ts";
-
+import { kiroUsageProvider } from "./usage.ts";
 /** Canonical provider id used to replace or extend the host Kiro provider. */
 export const KIRO_PROVIDER_ID = "kiro" as const;
 
@@ -27,6 +27,7 @@ export function createKiroProviderConfig(): ProviderConfig {
 			getApiKey: kiroOAuth.getApiKey,
 		},
 		streamSimple: streamKiro,
+		usage: kiroUsageProvider,
 		fetchDynamicModels: async (apiKey) => {
 			const structured = parseStructuredApiKey(apiKey);
 			if (!structured.token) {

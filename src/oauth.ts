@@ -1,5 +1,6 @@
 import type { FetchImpl, OAuthCredentials, OAuthLoginCallbacks } from "@oh-my-pi/pi-ai";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { getKiroEndpoints, resolveKiroApiRegion } from "./shared.ts";
 
 const BUILDER_ID_START_URL = "https://view.awsapps.com/start";
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -196,6 +197,7 @@ async function pollForToken(
 						clientSecret: flow.clientSecret,
 						region: flow.region,
 						authMethod: "idc",
+						apiEndpoint: getKiroEndpoints(resolveKiroApiRegion(flow.region)).runtime,
 					},
 				};
 			}
@@ -283,6 +285,8 @@ async function refreshKiroToken(credential: OAuthCredentials): Promise<KiroOAuth
 		region,
 		authMethod: "idc",
 		profileArn: (credential as KiroOAuthCredential).profileArn,
+		apiEndpoint:
+			credential.apiEndpoint ?? getKiroEndpoints(resolveKiroApiRegion(region)).runtime,
 	};
 }
 

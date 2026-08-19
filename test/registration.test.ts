@@ -4,6 +4,7 @@ import registerKiro, {
 	KIRO_USAGE_COMMAND,
 } from "../src/extension.ts";
 import { createKiroProviderConfig, KIRO_PROVIDER_ID } from "../src/provider.ts";
+import { kiroUsageProvider } from "../src/usage.ts";
 
 describe("omp extension registration", () => {
 	it("registers the kiro provider with a two-argument registerProvider call", () => {
@@ -28,6 +29,7 @@ describe("omp extension registration", () => {
 			};
 			streamSimple?: unknown;
 			fetchDynamicModels?: unknown;
+			usage?: unknown;
 		};
 		expect(name).toBe("kiro");
 		expect(providerConfig.api).toBe("kiro-api");
@@ -38,6 +40,7 @@ describe("omp extension registration", () => {
 		expect(typeof providerConfig.oauth?.getApiKey).toBe("function");
 		expect(typeof providerConfig.streamSimple).toBe("function");
 		expect(typeof providerConfig.fetchDynamicModels).toBe("function");
+		expect(providerConfig.usage).toBe(kiroUsageProvider);
 		// Bootstrap and dynamic catalogs are mutually exclusive in the OMP
 		// registry: a non-empty `models` short-circuits fetchDynamicModels.
 		// The bootstrap/authenticated switch must live inside fetchDynamicModels.
@@ -50,6 +53,7 @@ describe("omp extension registration", () => {
 		expect(config.api).toBe("kiro-api");
 		expect(config.models).toBeUndefined();
 		expect(config.oauth?.name).toBe("Kiro (AWS Builder ID / IAM Identity Center plugin)");
+		expect(config.usage).toBe(kiroUsageProvider);
 		expect(config.baseUrl).toContain("kiro.dev");
 	});
 });

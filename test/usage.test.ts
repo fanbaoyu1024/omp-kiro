@@ -1,9 +1,11 @@
 import type { FetchImpl } from "@oh-my-pi/pi-ai";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, vi } from "bun:test";
 import { KiroManagementHttpError } from "../src/shared.ts";
 import {
 	fetchKiroUsage,
+	fetchKiroUsageReport,
 	formatKiroUsage,
+	kiroUsageProvider,
 	type KiroUsageSnapshot,
 } from "../src/usage.ts";
 
@@ -274,5 +276,212 @@ describe("formatKiroUsage", () => {
 				"Remaining 9.7 credits",
 			].join("\n"),
 		);
+	});
+});
+
+function oauthUsageParams(overrides: {
+	accessToken?: string;
+	refreshToken?: string;
+	apiEndpoint?: string;
+	baseUrl?: string;
+	provider?: string;
+	type?: "oauth" | "api_key";
+	email?: string;
+	accountId?: string;
+} = {}): {
+	provider: string;
+	credential: {
+		type: "oauth" | "api_key";
+		accessToken?: string;
+		refreshToken?: string;
+		apiKey?: string;
+		apiEndpoint?: string;
+		email?: string;
+		accountId?: string;
+	};
+	baseUrl?: string;
+} {
+	return {
+		provider: overrides.provider ?? "kiro",
+		credential:
+			overrides.type === "api_key"
+				? { type: "api_key", apiKey: "key-fixture" }
+				: {
+						type: "oauth",
+						...(overrides.accessToken !== undefined
+							? { accessToken: overrides.accessToken }
+							: {}),
+						...(overrides.refreshToken !== undefined
+							? { refreshToken: overrides.refreshToken }
+							: {}),
+						...(overrides.apiEndpoint !== undefined
+							? { apiEndpoint: overrides.apiEndpoint }
+							: {}),
+						...(overrides.email !== undefined ? { email: overrides.email } : {}),
+						...(overrides.accountId !== undefined
+							? { accountId: overrides.accountId }
+							: {}),
+					},
+		...(overrides.baseUrl !== undefined ? { baseUrl: overrides.baseUrl } : {}),
+	};
+}
+
+/** Fetch mock serving List-Available-Profiles plus a fixed GetUsageLimits response. */
+function usagePipelineFetch(usageBody: Record<string, unknown>): {
+	fetchMock: FetchImpl;
+	requests: Array<{ url: string; init?: RequestInit }>;
+} {
+	const requests: Array<{ url: string; init?: RequestInit }> = [];
+	const fetchMock: FetchImpl = async (input, init) => {
+		const url = String(input);
+		requests.push({ url, init });
+		if (url.endsWith("/List-Available-Profiles")) {
+			return jsonResponse({ profiles: [{ arn: "resolved-profile" }] });
+		}
+		return jsonResponse(usageBody);
+	};
+	return { fetchMock, requests };
+}
+
+describe("Kiro standard usage provider", () => {
+	it("maps the credit breakdown to a standard usage report", async () => {
+		const { fetchMock, requests } = usagePipelineFetch(
+			usageResponse({
+				...creditBreakdown,
+				nextDateReset: 1_788_220_800,
+			}),
+		);
+		const report = await fetchKiroUsageReport(
+			oauthUsageParams({
+				accessToken: "access-fixture",
+				refreshToken: "refresh|client|secret|idc|eu-west-1",
+				baseUrl: "https://runtime.us-east-1.kiro.dev/",
+				email: "kiro@example.test",
+				accountId: "kiro-account",
+			}),
+			{ fetch: fetchMock },
+		);
+
+		expect(report).not.toBeNull();
+		expect(report?.provider).toBe("kiro");
+		expect(typeof report?.fetchedAt).toBe("number");
+		expect(report?.limits).toHaveLength(1);
+		const limit = report!.limits[0]!;
+		expect(limit.id).toBe("credits");
+		expect(limit.label).toBe("Credits");
+		expect(limit.scope.provider).toBe("kiro");
+		expect(limit.scope.tier).toBe("Kiro Pro");
+		expect(limit.scope.accountId).toBe("kiro-account");
+		expect(limit.amount.used).toBe(327.46);
+		expect(limit.amount.limit).toBe(1000);
+		expect(limit.amount.remaining).toBeCloseTo(672.54, 10);
+		expect(limit.amount.usedFraction).toBeCloseTo(0.32746, 10);
+		expect(limit.amount.remainingFraction).toBeCloseTo(0.67254, 10);
+		expect(limit.amount.unit).toBe("credits");
+		expect(limit.window?.resetsAt).toBe(1_788_220_800_000);
+		expect(limit.status).toBe("ok");
+		expect(report?.metadata?.region).toBe("eu-central-1");
+		expect(report?.metadata?.email).toBe("kiro@example.test");
+		expect(report?.metadata?.accountId).toBe("kiro-account");
+		expect(report?.metadata?.subscriptionTitle).toBe("Kiro Pro");
+		// The refresh token tail wins over the base URL region.
+		const usageUrl = new URL(requests[1]!.url);
+		expect(usageUrl.hostname).toBe("management.eu-central-1.kiro.dev");
+		expect(new Headers(requests[1]?.init?.headers).get("authorization")).toBe(
+			"Bearer access-fixture",
+		);
+		// The raw response is retained without any request credential material.
+		expect(JSON.stringify(report?.raw)).not.toContain("access-fixture");
+		expect(JSON.stringify(report?.raw)).not.toContain("eu-west-1");
+	});
+
+	it("falls back to the base URL region when the refresh token has no encoded tail", async () => {
+		const { fetchMock, requests } = usagePipelineFetch(usageResponse(creditBreakdown));
+		const report = await fetchKiroUsageReport(
+			oauthUsageParams({
+				accessToken: "access-fixture",
+				refreshToken: "plain-refresh",
+				baseUrl: "https://runtime.eu-central-1.kiro.dev/v1/chat/completions",
+			}),
+			{ fetch: fetchMock },
+		);
+
+		expect(report?.metadata?.region).toBe("eu-central-1");
+		expect(new URL(requests[1]!.url).hostname).toBe("management.eu-central-1.kiro.dev");
+	});
+
+	it("prefers the credential API endpoint over the model base URL", async () => {
+		const { fetchMock, requests } = usagePipelineFetch(usageResponse(creditBreakdown));
+		const report = await fetchKiroUsageReport(
+			oauthUsageParams({
+				accessToken: "access-fixture",
+				refreshToken: "plain-refresh",
+				apiEndpoint: "https://runtime.eu-central-1.kiro.dev/",
+				baseUrl: "https://runtime.us-east-1.kiro.dev/",
+			}),
+			{ fetch: fetchMock },
+		);
+
+		expect(report?.metadata?.region).toBe("eu-central-1");
+		expect(new URL(requests[1]!.url).hostname).toBe("management.eu-central-1.kiro.dev");
+	});
+
+	it("defaults to us-east-1 without any region hint", async () => {
+		const { fetchMock, requests } = usagePipelineFetch(usageResponse(creditBreakdown));
+		const report = await fetchKiroUsageReport(
+			oauthUsageParams({ accessToken: "access-fixture", refreshToken: "plain-refresh" }),
+			{ fetch: fetchMock },
+		);
+
+		expect(report?.metadata?.region).toBe("us-east-1");
+		expect(new URL(requests[1]!.url).hostname).toBe("management.us-east-1.kiro.dev");
+	});
+
+	it("supports only oauth credentials with an access token", () => {
+		expect(
+			kiroUsageProvider.supports?.(
+				oauthUsageParams({ accessToken: "access-fixture", refreshToken: "refresh" }),
+			),
+		).toBe(true);
+		expect(kiroUsageProvider.supports?.(oauthUsageParams())).toBe(false);
+		expect(kiroUsageProvider.supports?.(oauthUsageParams({ type: "api_key" }))).toBe(false);
+		expect(
+			kiroUsageProvider.supports?.(
+				oauthUsageParams({ provider: "anthropic", accessToken: "access-fixture" }),
+			),
+		).toBe(false);
+	});
+
+	it("returns null for unsupported credentials without touching the network", async () => {
+		const fetchMock = vi.fn<FetchImpl>();
+		const report = await fetchKiroUsageReport(
+			oauthUsageParams({ type: "api_key" }),
+			{ fetch: fetchMock },
+		);
+
+		expect(report).toBeNull();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("maps definitive auth failures to ProviderHttpError without leaking the token", async () => {
+		const fetchMock: FetchImpl = async (input) => {
+			const url = String(input);
+			if (url.endsWith("/List-Available-Profiles")) {
+				return jsonResponse({ profiles: [{ arn: "resolved-profile" }] });
+			}
+			return jsonResponse({ message: "unauthorized" }, 401);
+		};
+
+		const promise = fetchKiroUsageReport(
+			oauthUsageParams({ accessToken: "access-fixture", refreshToken: "refresh" }),
+			{ fetch: fetchMock },
+		);
+		await expect(promise).rejects.toThrow("HTTP 401");
+		try {
+			await promise;
+		} catch (error) {
+			expect(error).toHaveProperty("status", 401);
+			expect(String(error)).not.toContain("access-fixture");
+		}
 	});
 });

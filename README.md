@@ -26,13 +26,19 @@ omp /login
 
 The login prompts for your IAM Identity Center start URL (leave blank for AWS Builder ID), opens the device-code verification URL, and polls until you authorize. Credentials refresh automatically; the resolved profile ARN routes requests to the right Kiro profile.
 
-Check the authenticated account's current Kiro credits from the OMP TUI:
+Check the authenticated account's current Kiro credits from OMP's standard usage surfaces (OMP builds with extension usage-provider support):
+
+```sh
+omp usage --provider kiro
+```
+
+or the `/usage` panel in the OMP TUI. On OMP builds without extension usage support, the plugin's own command reports the same snapshot:
 
 ```text
 /kiro-usage
 ```
 
-The command reports the subscription, precise credits used and remaining, percentage used, and the next reset date.
+Both report the subscription, precise credits used and remaining, percentage used, and the next reset date. `/kiro-usage` is kept as the compatibility command and works on every supported OMP version.
 
 ## Provider identity
 
@@ -49,7 +55,7 @@ When enabled, this plugin replaces or extends OMP's built-in Kiro registration. 
 - **OAuth**: OIDC device authorization flow (`client/register` → `device_authorization` → token polling) against `oidc.<region>.amazonaws.com`. `oauth.getApiKey` returns a structured JSON API key (`{token, region, profileArn}`) that the stream layer parses.
 - **Dynamic catalog**: only `fetchDynamicModels` is configured — never `models` (OMP's registry ignores `fetchDynamicModels` when `models` is non-empty). The function returns the offline bootstrap catalog when unauthenticated and queries the profile-scoped management API (`List-Available-Profiles` + `List-Available-Models`) when authenticated.
 - **Runtime**: `streamSimple` posts to `https://runtime.<region>.kiro.dev/generateAssistantResponse` and decodes AWS `application/vnd.amazon.eventstream` frames (CRC-checked prelude/message framing) into OMP assistant events.
-- **Credits usage**: `/kiro-usage` resolves the active profile and queries Kiro's `GetUsageLimits` management operation, preferring the service's precision fields and formatting its reset timestamp as a calendar date.
+- **Credits usage**: the provider config registers a standard OMP `UsageProvider` (`usage` field) so the host `/usage` surfaces and `omp usage --provider kiro` render one `credits`-unit limit with used/limit/remaining, the reset timestamp, and the subscription tier. It queries Kiro's `GetUsageLimits` management operation (preferring the service's precision fields) and resolves the management region from the refresh-token encoding, then the model base URL, then `us-east-1`; the profile ARN comes from `List-Available-Profiles`. `/kiro-usage` is the equivalent plugin command for OMP builds without extension usage support.
 - **Cache safety**: only standard `ProviderModelConfig` fields are emitted. The region travels on the per-model `baseUrl`, the profile ARN in the standard `x-amzn-kiro-profile-arn` header, and the thinking surface in the standard `thinking` metadata — custom fields would be dropped by OMP's SQLite model cache.
 
 ## Known limitations

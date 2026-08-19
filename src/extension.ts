@@ -61,3 +61,4 @@ export default function registerKiro(pi: ExtensionAPI): void {
 }
 
 export { createKiroProviderConfig, KIRO_PROVIDER_ID } from "./provider.ts";
+export { kiroUsageProvider } from "./usage.ts";
