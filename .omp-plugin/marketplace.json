@@ -1,0 +1,32 @@
+{
+	"$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+	"name": "fanbaoyu-kiro",
+	"owner": {
+		"name": "Fan Baoyu"
+	},
+	"metadata": {
+		"description": "Kiro provider plugins for Oh My Pi",
+		"version": "1.0.0"
+	},
+	"plugins": [
+		{
+			"name": "omp-kiro",
+			"description": "Kiro OAuth, profile-scoped model discovery, and streaming runtime for OMP.",
+			"version": "1.0.0",
+			"source": {
+				"source": "github",
+				"repo": "fanbaoyu1024/omp-kiro",
+				"ref": "v1.0.0"
+			},
+			"author": {
+				"name": "Fan Baoyu"
+			},
+			"homepage": "https://github.com/fanbaoyu1024/omp-kiro",
+			"repository": "https://github.com/fanbaoyu1024/omp-kiro",
+			"license": "MIT",
+			"keywords": ["kiro", "oauth", "aws", "provider"],
+			"category": "development",
+			"tags": ["omp", "llm", "aws-iam-identity-center"]
+		}
+	]
+}

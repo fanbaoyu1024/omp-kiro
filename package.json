@@ -1,0 +1,70 @@
+{
+	"name": "omp-kiro",
+	"version": "1.0.0",
+	"description": "Kiro OAuth provider for Oh My Pi using the current kiro.dev runtime and management APIs.",
+	"type": "module",
+	"license": "MIT",
+	"author": "Fan Baoyu",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/fanbaoyu1024/omp-kiro.git"
+	},
+	"homepage": "https://github.com/fanbaoyu1024/omp-kiro#readme",
+	"bugs": {
+		"url": "https://github.com/fanbaoyu1024/omp-kiro/issues"
+	},
+	"keywords": [
+		"omp-plugin",
+		"omp-extension",
+		"kiro",
+		"oauth",
+		"aws-iam-identity-center"
+	],
+	"omp": {
+		"name": "Kiro (AWS Builder ID / IAM Identity Center plugin)",
+		"description": "Kiro (AWS) provider with IAM Identity Center / Builder ID device-code login and profile-scoped model discovery.",
+		"extensions": [
+			"./dist/extension.js"
+		]
+	},
+	"main": "./dist/extension.js",
+	"types": "./dist/extension.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/extension.d.ts",
+			"import": "./dist/extension.js"
+		},
+		"./core": {
+			"types": "./dist/core.d.ts",
+			"import": "./dist/core.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build:js": "bun build src/extension.ts src/core.ts --outdir dist --target node --format esm",
+		"build:types": "tsc -p tsconfig.build.json",
+		"build": "bun run clean && bun run build:js && bun run build:types",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"prepack": "bun run build"
+	},
+	"devDependencies": {
+		"@oh-my-pi/pi-ai": "^17.3.7",
+		"@oh-my-pi/pi-catalog": "^17.3.7",
+		"@oh-my-pi/pi-coding-agent": "^17.3.7",
+		"typescript": "^5.9.3"
+	},
+	"peerDependencies": {
+		"@oh-my-pi/pi-ai": ">=17.3.7",
+		"@oh-my-pi/pi-catalog": ">=17.3.7",
+		"@oh-my-pi/pi-coding-agent": ">=17.3.7"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}
