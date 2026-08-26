@@ -59,6 +59,8 @@ export interface KiroManagementAuth {
 export interface KiroCatalogModel {
 	modelId: string;
 	displayName?: string;
+	modelName?: string;
+	supportedInputTypes?: string[];
 	tokenLimits?: {
 		maxInputTokens?: number;
 		maxOutputTokens?: number;

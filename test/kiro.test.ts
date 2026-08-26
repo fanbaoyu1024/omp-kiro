@@ -531,6 +531,18 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 			"glm-5",
 			"qwen3-coder-next",
 		]);
+		expect(
+			models
+				.filter((model) => model.input.includes("image"))
+				.map((model) => model.id),
+		).toEqual([
+			"gpt-5.6-sol",
+			"gpt-5.6-terra",
+			"gpt-5.6-luna",
+			"deepseek-3.2",
+			"minimax-m2.1",
+			"qwen3-coder-next",
+		]);
 	});
 
 	it("treats the authenticated profile catalog as authoritative", async () => {
@@ -544,8 +556,9 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 			return jsonResponse({
 				models: [
 					{
-						modelId: "glm-5",
-						displayName: "GLM 5 Dynamic",
+						modelId: "gpt-5.6-sol",
+						modelName: "GPT 5.6 Sol Dynamic",
+						supportedInputTypes: ["TEXT", "IMAGE"],
 						tokenLimits: { maxInputTokens: 1234, maxOutputTokens: 567 },
 						additionalModelRequestFieldsSchema: {
 							properties: {
@@ -576,10 +589,11 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 		expect(requests[0]).toContain("profileArn=profile-fixture");
 		expect(models).toHaveLength(1);
 		expect(models[0]).toMatchObject({
-			id: "glm-5",
-			name: "GLM 5 Dynamic",
+			id: "gpt-5.6-sol",
+			name: "GPT 5.6 Sol Dynamic",
 			contextWindow: 1234,
 			maxTokens: 567,
+			input: ["text", "image"],
 		});
 		expect(models[0]?.baseUrl).toBe("https://runtime.eu-central-1.kiro.dev/");
 		expect(models[0]?.headers?.["x-amzn-kiro-profile-arn"]).toBe(

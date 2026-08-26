@@ -86,18 +86,22 @@ function createBootstrapModel(
 export const KIRO_MODELS: readonly KiroProviderModelConfig[] = [
 	createBootstrapModel("gpt-5.6-sol", {
 		contextWindow: 272_000,
+		input: ["text", "image"],
 		thinking: KIRO_THINKING,
 	}),
 	createBootstrapModel("gpt-5.6-terra", {
 		contextWindow: 272_000,
+		input: ["text", "image"],
 		thinking: KIRO_THINKING,
 	}),
 	createBootstrapModel("gpt-5.6-luna", {
 		contextWindow: 272_000,
+		input: ["text", "image"],
 		thinking: KIRO_THINKING,
 	}),
 	createBootstrapModel("deepseek-3.2", {
 		contextWindow: 164_000,
+		input: ["text", "image"],
 		thinking: KIRO_THINKING,
 	}),
 	createBootstrapModel("minimax-m2.5", {
@@ -107,6 +111,7 @@ export const KIRO_MODELS: readonly KiroProviderModelConfig[] = [
 	createBootstrapModel("minimax-m2.1", {
 		reasoning: false,
 		contextWindow: 196_000,
+		input: ["text", "image"],
 	}),
 	createBootstrapModel("glm-5", {
 		contextWindow: 200_000,
@@ -114,6 +119,7 @@ export const KIRO_MODELS: readonly KiroProviderModelConfig[] = [
 	}),
 	createBootstrapModel("qwen3-coder-next", {
 		contextWindow: 256_000,
+		input: ["text", "image"],
 		thinking: KIRO_THINKING,
 	}),
 ];
@@ -176,7 +182,11 @@ export function mapKiroCatalogToProviderModelConfigs(
 		return {
 			...(existing ?? createBootstrapModel(id)),
 			id,
-			name: model.displayName?.trim() || existing?.name || id,
+			name:
+				model.modelName?.trim() ||
+				model.displayName?.trim() ||
+				existing?.name ||
+				id,
 			api: KIRO_API,
 			baseUrl: getKiroEndpoints(region).runtime,
 			reasoning:
@@ -189,6 +199,14 @@ export function mapKiroCatalogToProviderModelConfigs(
 				DEFAULT_CONTEXT_WINDOW,
 			maxTokens:
 				limits?.maxOutputTokens ?? existing?.maxTokens ?? DEFAULT_MAX_TOKENS,
+			input:
+				model.supportedInputTypes !== undefined
+					? model.supportedInputTypes.some(
+							(type) => type.toUpperCase() === "IMAGE",
+						)
+						? ["text", "image"]
+						: ["text"]
+					: (existing?.input ?? ["text"]),
 			...(schema !== undefined ? { thinking: dynamicThinking(schema) } : {}),
 		};
 	});

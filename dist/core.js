@@ -134,18 +134,22 @@ function createBootstrapModel(id, options = {}) {
 var KIRO_MODELS = [
   createBootstrapModel("gpt-5.6-sol", {
     contextWindow: 272000,
+    input: ["text", "image"],
     thinking: KIRO_THINKING
   }),
   createBootstrapModel("gpt-5.6-terra", {
     contextWindow: 272000,
+    input: ["text", "image"],
     thinking: KIRO_THINKING
   }),
   createBootstrapModel("gpt-5.6-luna", {
     contextWindow: 272000,
+    input: ["text", "image"],
     thinking: KIRO_THINKING
   }),
   createBootstrapModel("deepseek-3.2", {
     contextWindow: 164000,
+    input: ["text", "image"],
     thinking: KIRO_THINKING
   }),
   createBootstrapModel("minimax-m2.5", {
@@ -154,7 +158,8 @@ var KIRO_MODELS = [
   }),
   createBootstrapModel("minimax-m2.1", {
     reasoning: false,
-    contextWindow: 196000
+    contextWindow: 196000,
+    input: ["text", "image"]
   }),
   createBootstrapModel("glm-5", {
     contextWindow: 200000,
@@ -162,6 +167,7 @@ var KIRO_MODELS = [
   }),
   createBootstrapModel("qwen3-coder-next", {
     contextWindow: 256000,
+    input: ["text", "image"],
     thinking: KIRO_THINKING
   })
 ];
@@ -193,12 +199,13 @@ function mapKiroCatalogToProviderModelConfigs(catalog, region) {
     return {
       ...existing ?? createBootstrapModel(id),
       id,
-      name: model.displayName?.trim() || existing?.name || id,
+      name: model.modelName?.trim() || model.displayName?.trim() || existing?.name || id,
       api: KIRO_API,
       baseUrl: getKiroEndpoints(region).runtime,
       reasoning: schema !== undefined ? true : existing?.reasoning ?? isReasoningModel(id),
       contextWindow: limits?.maxInputTokens ?? existing?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       maxTokens: limits?.maxOutputTokens ?? existing?.maxTokens ?? DEFAULT_MAX_TOKENS,
+      input: model.supportedInputTypes !== undefined ? model.supportedInputTypes.some((type) => type.toUpperCase() === "IMAGE") ? ["text", "image"] : ["text"] : existing?.input ?? ["text"],
       ...schema !== undefined ? { thinking: dynamicThinking(schema) } : {}
     };
   });
