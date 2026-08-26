@@ -3,6 +3,7 @@ import type {
 	AssistantMessage,
 	AssistantMessageEventStream,
 	Context,
+	FetchImpl,
 	ImageContent,
 	Message,
 	Model,
@@ -26,6 +27,7 @@ import {
 	getKiroEndpoints,
 	getKiroRegionFromEndpoint,
 	type KiroCatalogModel,
+	type KiroManagementAuth,
 	resolveKiroApiRegion,
 	resolveKiroProfileArn,
 } from "./shared.ts";
@@ -499,16 +501,31 @@ function emptyUsage(): Usage {
 	};
 }
 
-function findHeader(
-	headers: Record<string, string> | undefined,
-	name: string,
-): string | undefined {
-	if (!headers) return undefined;
-	const lower = name.toLowerCase();
-	return (
-		Object.entries(headers).find(([key]) => key.toLowerCase() === lower)?.[1] ??
-		undefined
+let resolvedProfileCache:
+	| { accessToken: string; region: string; profileArn: string }
+	| undefined;
+
+async function resolveProfileForCredential(
+	auth: KiroManagementAuth,
+	providedProfileArn: string | undefined,
+	fetchFn: FetchImpl,
+	signal?: AbortSignal,
+): Promise<string> {
+	if (providedProfileArn) return providedProfileArn;
+	if (
+		resolvedProfileCache?.accessToken === auth.accessToken &&
+		resolvedProfileCache.region === auth.region
+	) {
+		return resolvedProfileCache.profileArn;
+	}
+	const profileArn = await resolveKiroProfileArn(
+		auth,
+		undefined,
+		fetchFn,
+		signal,
 	);
+	resolvedProfileCache = { ...auth, profileArn };
+	return profileArn;
 }
 /** Structured Kiro API key: bearer token plus optional region and profile ARN. */
 export interface StructuredKiroApiKey {
@@ -683,14 +700,7 @@ export async function fetchKiroModelsForCredential(
 		...model,
 		headers: { ...model.headers, "x-amzn-kiro-profile-arn": profileArn },
 	}));
-	const discoveredIds = new Set(discovered.map((model) => model.id));
-	const runtime = getKiroEndpoints(region).runtime;
-	const fallback = KIRO_MODELS.filter((model) => !discoveredIds.has(model.id)).map((model) => ({
-		...model,
-		baseUrl: runtime,
-		headers: { ...model.headers, "x-amzn-kiro-profile-arn": profileArn },
-	}));
-	return [...discovered, ...fallback];
+	return discovered;
 }
 
 export function streamKiro(
@@ -720,11 +730,9 @@ export function streamKiro(
 				structured.region ?? getKiroRegionFromEndpoint(model.baseUrl),
 			);
 			const fetchFn = options.fetch ?? globalThis.fetch;
-			const profileArn = await resolveKiroProfileArn(
+			const profileArn = await resolveProfileForCredential(
 				{ accessToken: structured.token, region },
-				structured.profileArn ??
-					findHeader(model.headers, "x-amzn-kiro-profile-arn") ??
-					findHeader(options.headers, "x-amzn-kiro-profile-arn"),
+				structured.profileArn,
 				fetchFn,
 				options.signal,
 			);
@@ -751,6 +759,7 @@ export function streamKiro(
 					"Content-Type": "application/json",
 					Accept: "application/vnd.amazon.eventstream",
 					Authorization: `Bearer ${structured.token}`,
+					"x-amzn-kiro-profile-arn": profileArn,
 					"x-amzn-codewhisperer-optout": "true",
 					"amz-sdk-invocation-id": requestId,
 					"amz-sdk-request": "attempt=1; max=1",
@@ -763,7 +772,32 @@ export function streamKiro(
 			});
 			if (!response.ok) {
 				output.errorStatus = response.status;
-				throw new Error(`Kiro API request failed (HTTP ${response.status})`);
+				let detail = "";
+				try {
+					const body = (await response.json()) as {
+						message?: unknown;
+						reason?: unknown;
+						error?: unknown;
+					};
+					const candidate = [body.message, body.reason, body.error].find(
+						(value): value is string =>
+							typeof value === "string" && value.trim().length > 0,
+					);
+					if (candidate) {
+						detail = candidate
+							.replace(/\s+/g, " ")
+							.split(structured.token)
+							.join("[redacted]")
+							.split(profileArn)
+							.join("[redacted]")
+							.slice(0, 300);
+					}
+				} catch {
+					// Some runtime errors return an empty or non-JSON body.
+				}
+				throw new Error(
+					`Kiro API request failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+				);
 			}
 			if (!response.body)
 				throw new Error("Kiro API returned no event stream body");

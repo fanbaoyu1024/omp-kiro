@@ -79,68 +79,43 @@ function createBootstrapModel(
 }
 
 /**
- * Kiro's management catalog is account/profile scoped, so these models are a
- * safe bootstrap. Successful List-Available-Models results override matching
- * entries while omitted bootstrap models remain available.
+ * Offline bootstrap matching the Kiro CLI 2.19.2 catalog. Once authenticated,
+ * List-Available-Models is authoritative because availability is account and
+ * profile scoped; omitted models must not be reintroduced from this list.
  */
 export const KIRO_MODELS: readonly KiroProviderModelConfig[] = [
-	createBootstrapModel("auto", {
-		contextWindow: 1_000_000,
-		maxTokens: 65_536,
+	createBootstrapModel("gpt-5.6-sol", {
+		contextWindow: 272_000,
 		thinking: KIRO_THINKING,
 	}),
-	createBootstrapModel("claude-opus-5", {
-		contextWindow: 1_000_000,
-		maxTokens: 128_000,
+	createBootstrapModel("gpt-5.6-terra", {
+		contextWindow: 272_000,
 		thinking: KIRO_THINKING,
 	}),
-	createBootstrapModel("claude-sonnet-5", {
-		contextWindow: 1_000_000,
-		maxTokens: 65_536,
+	createBootstrapModel("gpt-5.6-luna", {
+		contextWindow: 272_000,
 		thinking: KIRO_THINKING,
 	}),
-	createBootstrapModel("claude-opus-4.8", {
-		contextWindow: 1_000_000,
-		maxTokens: 128_000,
+	createBootstrapModel("deepseek-3.2", {
+		contextWindow: 164_000,
 		thinking: KIRO_THINKING,
 	}),
-	createBootstrapModel("claude-opus-4.7", {
-		contextWindow: 1_000_000,
-		maxTokens: 128_000,
-		thinking: KIRO_THINKING,
-	}),
-	createBootstrapModel("claude-opus-4.6", {
-		maxTokens: 32_768,
-		thinking: KIRO_THINKING,
-	}),
-	createBootstrapModel("claude-sonnet-4.6", {
-		maxTokens: 65_536,
-		thinking: KIRO_THINKING,
-	}),
-	createBootstrapModel("claude-opus-4.5", {
-		maxTokens: 65_536,
-		thinking: KIRO_THINKING,
-	}),
-	createBootstrapModel("claude-sonnet-4.5", {
-		maxTokens: 65_536,
-		thinking: KIRO_THINKING,
-	}),
-	createBootstrapModel("claude-sonnet-4", {
-		maxTokens: 65_536,
-		thinking: KIRO_THINKING,
-	}),
-	createBootstrapModel("claude-haiku-4.5", {
+	createBootstrapModel("minimax-m2.5", {
 		reasoning: false,
-		maxTokens: 65_536,
+		contextWindow: 196_000,
 	}),
-	createBootstrapModel("gpt-5.6-sol", { thinking: KIRO_THINKING }),
-	createBootstrapModel("gpt-5.6-terra", { thinking: KIRO_THINKING }),
-	createBootstrapModel("gpt-5.6-luna", { thinking: KIRO_THINKING }),
-	createBootstrapModel("deepseek-3.2", { thinking: KIRO_THINKING }),
-	createBootstrapModel("minimax-m2.5", { reasoning: false }),
-	createBootstrapModel("minimax-m2.1", { reasoning: false }),
-	createBootstrapModel("glm-5", { thinking: KIRO_THINKING }),
-	createBootstrapModel("qwen3-coder-next", { thinking: KIRO_THINKING }),
+	createBootstrapModel("minimax-m2.1", {
+		reasoning: false,
+		contextWindow: 196_000,
+	}),
+	createBootstrapModel("glm-5", {
+		contextWindow: 200_000,
+		thinking: KIRO_THINKING,
+	}),
+	createBootstrapModel("qwen3-coder-next", {
+		contextWindow: 256_000,
+		thinking: KIRO_THINKING,
+	}),
 ];
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

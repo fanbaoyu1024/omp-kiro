@@ -1,6 +1,10 @@
 import type { FetchImpl, OAuthCredentials, OAuthLoginCallbacks } from "@oh-my-pi/pi-ai";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
-import { getKiroEndpoints, resolveKiroApiRegion } from "./shared.ts";
+import {
+	getKiroEndpoints,
+	getKiroRegionFromEndpoint,
+	resolveKiroApiRegion,
+} from "./shared.ts";
 
 const BUILDER_ID_START_URL = "https://view.awsapps.com/start";
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -299,7 +303,9 @@ export function getKiroApiKey(credential: OAuthCredentials): string {
 	const kiroCredential = credential as KiroOAuthCredential;
 	return JSON.stringify({
 		token: credential.access,
-		region: kiroCredential.region,
+		region:
+			kiroCredential.region ??
+			getKiroRegionFromEndpoint(credential.apiEndpoint),
 		profileArn: kiroCredential.profileArn,
 	});
 }

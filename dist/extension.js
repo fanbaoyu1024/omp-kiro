@@ -132,63 +132,38 @@ function createBootstrapModel(id, options = {}) {
   };
 }
 var KIRO_MODELS = [
-  createBootstrapModel("auto", {
-    contextWindow: 1e6,
-    maxTokens: 65536,
+  createBootstrapModel("gpt-5.6-sol", {
+    contextWindow: 272000,
     thinking: KIRO_THINKING
   }),
-  createBootstrapModel("claude-opus-5", {
-    contextWindow: 1e6,
-    maxTokens: 128000,
+  createBootstrapModel("gpt-5.6-terra", {
+    contextWindow: 272000,
     thinking: KIRO_THINKING
   }),
-  createBootstrapModel("claude-sonnet-5", {
-    contextWindow: 1e6,
-    maxTokens: 65536,
+  createBootstrapModel("gpt-5.6-luna", {
+    contextWindow: 272000,
     thinking: KIRO_THINKING
   }),
-  createBootstrapModel("claude-opus-4.8", {
-    contextWindow: 1e6,
-    maxTokens: 128000,
+  createBootstrapModel("deepseek-3.2", {
+    contextWindow: 164000,
     thinking: KIRO_THINKING
   }),
-  createBootstrapModel("claude-opus-4.7", {
-    contextWindow: 1e6,
-    maxTokens: 128000,
-    thinking: KIRO_THINKING
-  }),
-  createBootstrapModel("claude-opus-4.6", {
-    maxTokens: 32768,
-    thinking: KIRO_THINKING
-  }),
-  createBootstrapModel("claude-sonnet-4.6", {
-    maxTokens: 65536,
-    thinking: KIRO_THINKING
-  }),
-  createBootstrapModel("claude-opus-4.5", {
-    maxTokens: 65536,
-    thinking: KIRO_THINKING
-  }),
-  createBootstrapModel("claude-sonnet-4.5", {
-    maxTokens: 65536,
-    thinking: KIRO_THINKING
-  }),
-  createBootstrapModel("claude-sonnet-4", {
-    maxTokens: 65536,
-    thinking: KIRO_THINKING
-  }),
-  createBootstrapModel("claude-haiku-4.5", {
+  createBootstrapModel("minimax-m2.5", {
     reasoning: false,
-    maxTokens: 65536
+    contextWindow: 196000
   }),
-  createBootstrapModel("gpt-5.6-sol", { thinking: KIRO_THINKING }),
-  createBootstrapModel("gpt-5.6-terra", { thinking: KIRO_THINKING }),
-  createBootstrapModel("gpt-5.6-luna", { thinking: KIRO_THINKING }),
-  createBootstrapModel("deepseek-3.2", { thinking: KIRO_THINKING }),
-  createBootstrapModel("minimax-m2.5", { reasoning: false }),
-  createBootstrapModel("minimax-m2.1", { reasoning: false }),
-  createBootstrapModel("glm-5", { thinking: KIRO_THINKING }),
-  createBootstrapModel("qwen3-coder-next", { thinking: KIRO_THINKING })
+  createBootstrapModel("minimax-m2.1", {
+    reasoning: false,
+    contextWindow: 196000
+  }),
+  createBootstrapModel("glm-5", {
+    contextWindow: 200000,
+    thinking: KIRO_THINKING
+  }),
+  createBootstrapModel("qwen3-coder-next", {
+    contextWindow: 256000,
+    thinking: KIRO_THINKING
+  })
 ];
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
@@ -521,7 +496,7 @@ function getKiroApiKey(credential) {
   const kiroCredential = credential;
   return JSON.stringify({
     token: credential.access,
-    region: kiroCredential.region,
+    region: kiroCredential.region ?? getKiroRegionFromEndpoint(credential.apiEndpoint),
     profileArn: kiroCredential.profileArn
   });
 }
@@ -1115,11 +1090,16 @@ function emptyUsage() {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
   };
 }
-function findHeader(headers, name) {
-  if (!headers)
-    return;
-  const lower = name.toLowerCase();
-  return Object.entries(headers).find(([key]) => key.toLowerCase() === lower)?.[1] ?? undefined;
+var resolvedProfileCache;
+async function resolveProfileForCredential(auth, providedProfileArn, fetchFn, signal) {
+  if (providedProfileArn)
+    return providedProfileArn;
+  if (resolvedProfileCache?.accessToken === auth.accessToken && resolvedProfileCache.region === auth.region) {
+    return resolvedProfileCache.profileArn;
+  }
+  const profileArn = await resolveKiroProfileArn(auth, undefined, fetchFn, signal);
+  resolvedProfileCache = { ...auth, profileArn };
+  return profileArn;
 }
 function parseStructuredApiKey(apiKey) {
   if (!apiKey?.startsWith("{"))
@@ -1247,14 +1227,7 @@ async function fetchKiroModelsForCredential(credential, signal) {
     ...model,
     headers: { ...model.headers, "x-amzn-kiro-profile-arn": profileArn }
   }));
-  const discoveredIds = new Set(discovered.map((model) => model.id));
-  const runtime = getKiroEndpoints(region).runtime;
-  const fallback = KIRO_MODELS.filter((model) => !discoveredIds.has(model.id)).map((model) => ({
-    ...model,
-    baseUrl: runtime,
-    headers: { ...model.headers, "x-amzn-kiro-profile-arn": profileArn }
-  }));
-  return [...discovered, ...fallback];
+  return discovered;
 }
 function streamKiro(model, context, options = {}) {
   const stream = createAssistantMessageEventStream();
@@ -1275,7 +1248,7 @@ function streamKiro(model, context, options = {}) {
         throw new Error("Kiro credentials not set. Run /login kiro.");
       const region = resolveKiroApiRegion(structured.region ?? getKiroRegionFromEndpoint(model.baseUrl));
       const fetchFn = options.fetch ?? globalThis.fetch;
-      const profileArn = await resolveKiroProfileArn({ accessToken: structured.token, region }, structured.profileArn ?? findHeader(model.headers, "x-amzn-kiro-profile-arn") ?? findHeader(options.headers, "x-amzn-kiro-profile-arn"), fetchFn, options.signal);
+      const profileArn = await resolveProfileForCredential({ accessToken: structured.token, region }, structured.profileArn, fetchFn, options.signal);
       const simpleOptions = options;
       const request = buildKiroRequest(model, context, profileArn, simpleOptions.sessionId ?? crypto.randomUUID(), simpleOptions.reasoning);
       const payload = await options.onPayload?.(request, model) ?? request;
@@ -1290,6 +1263,7 @@ function streamKiro(model, context, options = {}) {
           "Content-Type": "application/json",
           Accept: "application/vnd.amazon.eventstream",
           Authorization: `Bearer ${structured.token}`,
+          "x-amzn-kiro-profile-arn": profileArn,
           "x-amzn-codewhisperer-optout": "true",
           "amz-sdk-invocation-id": requestId,
           "amz-sdk-request": "attempt=1; max=1",
@@ -1302,7 +1276,15 @@ function streamKiro(model, context, options = {}) {
       });
       if (!response.ok) {
         output.errorStatus = response.status;
-        throw new Error(`Kiro API request failed (HTTP ${response.status})`);
+        let detail = "";
+        try {
+          const body = await response.json();
+          const candidate = [body.message, body.reason, body.error].find((value) => typeof value === "string" && value.trim().length > 0);
+          if (candidate) {
+            detail = candidate.replace(/\s+/g, " ").split(structured.token).join("[redacted]").split(profileArn).join("[redacted]").slice(0, 300);
+          }
+        } catch {}
+        throw new Error(`Kiro API request failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
       }
       if (!response.body)
         throw new Error("Kiro API returned no event stream body");

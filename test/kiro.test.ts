@@ -253,6 +253,22 @@ describe("Kiro OAuth", () => {
 			profileArn: "profile-fixture",
 		});
 	});
+
+	it("recovers the persisted region from the standard API endpoint metadata", () => {
+		const apiKey = JSON.parse(
+			kiroOAuth.getApiKey({
+				access: "access-fixture",
+				refresh: "refresh-fixture",
+				expires: Date.now() + 60_000,
+				apiEndpoint: "https://runtime.eu-central-1.kiro.dev/",
+			}),
+		) as { token: string; region?: string };
+
+		expect(apiKey).toEqual({
+			token: "access-fixture",
+			region: "eu-central-1",
+		});
+	});
 });
 
 describe("Kiro OAuth error handling", () => {
@@ -495,7 +511,7 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 		const models = await config.fetchDynamicModels!(undefined);
 		expect(fetchMock).not.toHaveBeenCalled();
 		expect(models.length).toBeGreaterThanOrEqual(1);
-		expect(models[0]).toMatchObject({ id: "auto", api: "kiro-api" });
+		expect(models[0]).toMatchObject({ id: "gpt-5.6-sol", api: "kiro-api" });
 		for (const model of models) {
 			expect(model.api).toBe("kiro-api");
 			expect((model as { kiroModelId?: unknown }).kiroModelId).toBeUndefined();
@@ -505,9 +521,19 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 			).toBeUndefined();
 		}
 		expect(KIRO_MODELS.length).toBe(models.length);
+		expect(models.map((model) => model.id)).toEqual([
+			"gpt-5.6-sol",
+			"gpt-5.6-terra",
+			"gpt-5.6-luna",
+			"deepseek-3.2",
+			"minimax-m2.5",
+			"minimax-m2.1",
+			"glm-5",
+			"qwen3-coder-next",
+		]);
 	});
 
-	it("merges a partial profile catalog without dropping omitted Claude bootstrap models", async () => {
+	it("treats the authenticated profile catalog as authoritative", async () => {
 		const requests: string[] = [];
 		const fetchMock: FetchImpl = async (input) => {
 			const url = String(input);
@@ -548,7 +574,7 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 			"https://management.eu-central-1.kiro.dev/List-Available-Models",
 		);
 		expect(requests[0]).toContain("profileArn=profile-fixture");
-		expect(models).toHaveLength(KIRO_MODELS.length);
+		expect(models).toHaveLength(1);
 		expect(models[0]).toMatchObject({
 			id: "glm-5",
 			name: "GLM 5 Dynamic",
@@ -559,10 +585,10 @@ describe("Kiro dynamic catalog (fetchDynamicModels contract)", () => {
 		expect(models[0]?.headers?.["x-amzn-kiro-profile-arn"]).toBe(
 			"profile-fixture",
 		);
+		expect(models.find((model) => model.id === "claude-sonnet-5")).toBeUndefined();
 		expect((models[0]?.thinking as ThinkingConfig | undefined)?.mode).toBe(
 			"effort",
 		);
-		expect(models.some((model) => model.id === "claude-sonnet-4.5")).toBe(true);
 	});
 });
 
@@ -688,10 +714,14 @@ describe("Kiro EventStream and runtime", () => {
 		expect(sentRequest).toMatchObject({ profileArn: "profile-fixture" });
 	});
 
-	it("resolves the region from the model base URL and the profile ARN from model headers", async () => {
+	it("re-resolves the profile for a raw bearer instead of trusting a cached model header", async () => {
 		const requests: Array<{ url: string; init?: RequestInit }> = [];
 		const fetchMock: FetchImpl = async (input, init) => {
-			requests.push({ url: String(input), init });
+			const url = String(input);
+			requests.push({ url, init });
+			if (url.endsWith("/List-Available-Profiles")) {
+				return jsonResponse({ profiles: [{ arn: "current-profile" }] });
+			}
 			return new Response(
 				concatFrames([eventStreamFrame(JSON.stringify({ content: "hi" }))]),
 				{ status: 200 },
@@ -699,7 +729,7 @@ describe("Kiro EventStream and runtime", () => {
 		};
 		const model = kiroModel({
 			baseUrl: "https://runtime.eu-central-1.kiro.dev/",
-			headers: { "x-amzn-kiro-profile-arn": "header-fixture" },
+			headers: { "x-amzn-kiro-profile-arn": "stale-profile" },
 		});
 		const context: Context = {
 			messages: [{ role: "user", content: "Current", timestamp: 1 }],
@@ -710,15 +740,41 @@ describe("Kiro EventStream and runtime", () => {
 		}).result();
 
 		expect(result.stopReason).toBe("stop");
-		expect(requests[0]?.url).toBe(
+		expect(requests.map((request) => request.url)).toEqual([
+			"https://management.eu-central-1.kiro.dev/List-Available-Profiles",
 			"https://runtime.eu-central-1.kiro.dev/generateAssistantResponse",
-		);
-		expect(JSON.parse(String(requests[0]?.init?.body))).toMatchObject({
-			profileArn: "header-fixture",
+		]);
+		expect(JSON.parse(String(requests[1]?.init?.body))).toMatchObject({
+			profileArn: "current-profile",
 		});
 		expect(
-			new Headers(requests[0]?.init?.headers).get("x-amzn-kiro-profile-arn"),
-		).toBe("header-fixture");
+			new Headers(requests[1]?.init?.headers).get("x-amzn-kiro-profile-arn"),
+		).toBe("current-profile");
+	});
+
+	it("surfaces the Kiro validation message for runtime HTTP 400 responses", async () => {
+		const result = await streamKiro(
+			kiroModel({ id: "retired-model" }),
+			{ messages: [{ role: "user", content: "Current", timestamp: 1 }] },
+			{
+				apiKey: JSON.stringify({
+					token: "access-fixture",
+					region: "us-east-1",
+					profileArn: "profile-fixture",
+				}),
+				fetch: async () =>
+					new Response(
+						JSON.stringify({
+							message: "The selected model is not supported for this profile",
+						}),
+						{ status: 400, headers: { "Content-Type": "application/json" } },
+					),
+			},
+		).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorStatus).toBe(400);
+		expect(result.errorMessage).toContain("not supported for this profile");
 	});
 
 	it("emits an error event when no credentials are configured", async () => {
