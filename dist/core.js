@@ -784,6 +784,12 @@ function createAssistantMessageEventStream() {
 var EMPTY_CONTENT_PLACEHOLDER = "Please proceed with the task.";
 var TOOL_RESULT_LIMIT = 250000;
 var USER_AGENT2 = "omp-kiro/1.0";
+var meteringByMessageTimestamp = new Map;
+function consumeKiroMetering(timestamp) {
+  const metering = meteringByMessageTimestamp.get(timestamp);
+  meteringByMessageTimestamp.delete(timestamp);
+  return metering;
+}
 function asRecord2(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
 }
@@ -825,6 +831,16 @@ function parseKiroEvent(payload) {
     return {
       type: "contextUsage",
       data: { contextUsagePercentage: parsed.contextUsagePercentage }
+    };
+  }
+  if (typeof parsed.usage === "number" && Number.isFinite(parsed.usage) && typeof parsed.unit === "string") {
+    return {
+      type: "metering",
+      data: {
+        value: parsed.usage,
+        unit: parsed.unit,
+        unitPlural: typeof parsed.unitPlural === "string" ? parsed.unitPlural : `${parsed.unit}s`
+      }
     };
   }
   const rawUsage = asRecord2(parsed.usage);
@@ -1299,6 +1315,7 @@ function streamKiro(model, context, options = {}) {
       let emittedToolCalls = 0;
       let receivedContextUsage = false;
       let usageEvent;
+      let meteringEvent;
       for await (const frame of decodeKiroEventStream(response.body)) {
         const payloadText = new TextDecoder().decode(frame.payload);
         let payload2;
@@ -1310,6 +1327,9 @@ function streamKiro(model, context, options = {}) {
         const event = parseKiroEvent(payload2);
         if (!event)
           continue;
+        if (output.ttft === undefined && (event.type === "content" || event.type === "thinkingText" || event.type === "toolUse")) {
+          output.ttft = Date.now() - output.timestamp;
+        }
         switch (event.type) {
           case "content":
             endThinking(output, stream, thinkingState);
@@ -1361,6 +1381,9 @@ function streamKiro(model, context, options = {}) {
           case "usage":
             usageEvent = event.data;
             break;
+          case "metering":
+            meteringEvent = event.data;
+            break;
           case "error":
             throw new Error(`Kiro API stream error: ${event.data.error}${event.data.message ? `: ${event.data.message}` : ""}`);
         }
@@ -1370,10 +1393,28 @@ function streamKiro(model, context, options = {}) {
       endThinking(output, stream, thinkingState);
       endText(output, stream, textState);
       output.usage.input = usageEvent?.inputTokens ?? output.usage.input;
-      output.usage.output = usageEvent?.outputTokens ?? 0;
-      output.usage.totalTokens = output.usage.input + output.usage.output;
+      const estimatedOutputText = output.content.map((block) => {
+        if (block.type === "text")
+          return block.text;
+        if (block.type === "thinking")
+          return block.thinking;
+        if (block.type === "toolCall")
+          return `${block.name}${JSON.stringify(block.arguments)}`;
+        return "";
+      }).join("");
+      output.usage.output = usageEvent?.outputTokens ?? (estimatedOutputText ? Math.max(1, Math.ceil(new TextEncoder().encode(estimatedOutputText).length / 4)) : 0);
       if (!receivedContextUsage && output.usage.input === 0)
         output.usage.input = context.messages.length;
+      output.usage.totalTokens = output.usage.input + output.usage.output;
+      output.duration = Date.now() - output.timestamp;
+      if (meteringEvent) {
+        if (meteringByMessageTimestamp.size >= 32) {
+          const oldest = meteringByMessageTimestamp.keys().next().value;
+          if (oldest !== undefined)
+            meteringByMessageTimestamp.delete(oldest);
+        }
+        meteringByMessageTimestamp.set(output.timestamp, meteringEvent);
+      }
       output.stopReason = emittedToolCalls > 0 ? "toolUse" : "stop";
       stream.push({ type: "done", reason: output.stopReason, message: output });
     } catch (error) {
@@ -1590,6 +1631,7 @@ export {
   decodeKiroEventStream,
   createKiroProviderConfig,
   crc32,
+  consumeKiroMetering,
   buildKiroRequest,
   KiroManagementHttpError,
   KIRO_PROVIDER_ID,

@@ -22,7 +22,12 @@ import {
 import { type KiroOAuthCredential, kiroOAuth } from "../src/oauth.ts";
 import { createKiroProviderConfig } from "../src/provider.ts";
 import { fetchKiroModelCatalog } from "../src/shared.ts";
-import { buildKiroRequest, parseKiroEvent, streamKiro } from "../src/stream.ts";
+import {
+	buildKiroRequest,
+	consumeKiroMetering,
+	parseKiroEvent,
+	streamKiro,
+} from "../src/stream.ts";
 
 function jsonResponse(value: unknown, status = 200): Response {
 	return new Response(JSON.stringify(value), {
@@ -662,6 +667,20 @@ describe("Kiro EventStream and runtime", () => {
 			type: "usage",
 			data: { inputTokens: 10, outputTokens: 4 },
 		});
+		expect(
+			parseKiroEvent({
+				usage: 0.0005357543117744611,
+				unit: "credit",
+				unitPlural: "credits",
+			}),
+		).toEqual({
+			type: "metering",
+			data: {
+				value: 0.0005357543117744611,
+				unit: "credit",
+				unitPlural: "credits",
+			},
+		});
 
 		const requests: Array<{ url: string; init?: RequestInit }> = [];
 		const responseBody = concatFrames([
@@ -726,6 +745,50 @@ describe("Kiro EventStream and runtime", () => {
 			conversationState: { conversationId: "conversation-fixture" },
 		});
 		expect(sentRequest).toMatchObject({ profileArn: "profile-fixture" });
+	});
+
+	it("estimates output tokens and retains per-turn credit metering", async () => {
+		const responseBody = concatFrames([
+			eventStreamFrame(JSON.stringify({ content: "hello world" })),
+			eventStreamFrame(JSON.stringify({ contextUsagePercentage: 0.5 })),
+			eventStreamFrame(
+				JSON.stringify({
+					usage: 0.0005357543117744611,
+					unit: "credit",
+					unitPlural: "credits",
+				}),
+			),
+		]);
+		const result = await streamKiro(
+			kiroModel({ contextWindow: 200_000 }),
+			{ messages: [{ role: "user", content: "Current", timestamp: 1 }] },
+			{
+				apiKey: JSON.stringify({
+					token: "access-fixture",
+					region: "us-east-1",
+					profileArn: "profile-fixture",
+				}),
+				fetch: async () =>
+					new Response(responseBody, {
+						status: 200,
+						headers: {
+							"Content-Type": "application/vnd.amazon.eventstream",
+						},
+					}),
+			},
+		).result();
+
+		expect(result.usage.input).toBe(1000);
+		expect(result.usage.output).toBe(3);
+		expect(result.usage.totalTokens).toBe(1003);
+		expect(result.duration).toBeGreaterThanOrEqual(0);
+		expect(result.ttft).toBeGreaterThanOrEqual(0);
+		expect(consumeKiroMetering(result.timestamp)).toEqual({
+			value: 0.0005357543117744611,
+			unit: "credit",
+			unitPlural: "credits",
+		});
+		expect(consumeKiroMetering(result.timestamp)).toBeUndefined();
 	});
 
 	it("re-resolves the profile for a raw bearer instead of trusting a cached model header", async () => {

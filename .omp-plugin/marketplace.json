@@ -6,17 +6,17 @@
 	},
 	"metadata": {
 		"description": "Kiro provider plugins for Oh My Pi",
-		"version": "1.2.2"
+		"version": "1.2.3"
 	},
 	"plugins": [
 		{
 			"name": "omp-kiro",
 			"description": "Kiro OAuth, credits usage, profile-scoped model discovery, and streaming runtime for OMP.",
-			"version": "1.2.2",
+			"version": "1.2.3",
 			"source": {
 				"source": "github",
 				"repo": "fanbaoyu1024/omp-kiro",
-				"ref": "v1.2.2"
+				"ref": "v1.2.3"
 			},
 			"author": {
 				"name": "Fan Baoyu"

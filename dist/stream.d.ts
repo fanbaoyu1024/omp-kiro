@@ -54,6 +54,12 @@ export interface KiroRequest {
     additionalModelRequestFields?: Record<string, unknown>;
     agentMode: "vibe";
 }
+export interface KiroMetering {
+    value: number;
+    unit: string;
+    unitPlural: string;
+}
+export declare function consumeKiroMetering(timestamp: number): KiroMetering | undefined;
 type KiroEvent = {
     type: "content";
     data: string;
@@ -92,6 +98,9 @@ type KiroEvent = {
         inputTokens?: number;
         outputTokens?: number;
     };
+} | {
+    type: "metering";
+    data: KiroMetering;
 } | {
     type: "error";
     data: {

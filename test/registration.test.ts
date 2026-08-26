@@ -10,7 +10,8 @@ describe("omp extension registration", () => {
 	it("registers the kiro provider with a two-argument registerProvider call", () => {
 		const registerProvider = vi.fn();
 		const registerCommand = vi.fn();
-		registerKiro({ registerProvider, registerCommand } as never);
+		const on = vi.fn();
+		registerKiro({ registerProvider, registerCommand, on } as never);
 
 		expect(registerProvider).toHaveBeenCalledTimes(1);
 		const [name, config] = registerProvider.mock.calls[0] as [
@@ -62,10 +63,12 @@ describe("kiro-usage command", () => {
 	it("registers the kiro-usage command exactly once with a description and callable handler", () => {
 		const registerProvider = vi.fn();
 		const registerCommand = vi.fn();
-		registerKiro({ registerProvider, registerCommand } as never);
+		const on = vi.fn();
+		registerKiro({ registerProvider, registerCommand, on } as never);
 
 		expect(registerProvider).toHaveBeenCalledTimes(1);
 		expect(registerCommand).toHaveBeenCalledTimes(1);
+		expect(on).toHaveBeenCalledWith("message_end", expect.any(Function));
 		const [name, options] = registerCommand.mock.calls[0] as [
 			string,
 			{ description?: string; handler?: unknown },

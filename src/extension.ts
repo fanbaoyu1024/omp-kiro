@@ -4,7 +4,11 @@ import type {
 } from "@oh-my-pi/pi-coding-agent";
 import { createKiroProviderConfig, KIRO_PROVIDER_ID } from "./provider.ts";
 import { resolveKiroApiRegion } from "./shared.ts";
-import { parseStructuredApiKey, type StructuredKiroApiKey } from "./stream.ts";
+import {
+	consumeKiroMetering,
+	parseStructuredApiKey,
+	type StructuredKiroApiKey,
+} from "./stream.ts";
 import { fetchKiroUsage, formatKiroUsage } from "./usage.ts";
 
 /** Slash command that reports the current Kiro credits usage. */
@@ -20,6 +24,11 @@ function redactKiroCredentials(
 	return structured.profileArn
 		? redacted.split(structured.profileArn).join("[redacted]")
 		: redacted;
+}
+
+function formatMeteredCredits(value: number): string {
+	const precision = value < 0.01 ? 6 : 3;
+	return value.toFixed(precision).replace(/\.?0+$/, "");
 }
 
 /** Handler for /kiro-usage: fetches and displays the Kiro credits snapshot. */
@@ -57,6 +66,24 @@ export default function registerKiro(pi: ExtensionAPI): void {
 	pi.registerCommand(KIRO_USAGE_COMMAND, {
 		description: "Show Kiro credits usage and next reset date",
 		handler: handleKiroUsageCommand,
+	});
+	const creditsBySession = new Map<string, number>();
+	pi.on("message_end", (event, ctx) => {
+		if (
+			event.message.role !== "assistant" ||
+			event.message.provider !== KIRO_PROVIDER_ID
+		) {
+			return;
+		}
+		const metering = consumeKiroMetering(event.message.timestamp);
+		if (!metering || metering.unit.toLowerCase() !== "credit") return;
+		const sessionId = ctx.sessionManager.getSessionId();
+		const total = (creditsBySession.get(sessionId) ?? 0) + metering.value;
+		creditsBySession.set(sessionId, total);
+		ctx.ui.setStatus(
+			"kiro-credits",
+			`Kiro ${formatMeteredCredits(metering.value)} credits · Σ ${formatMeteredCredits(total)}`,
+		);
 	});
 }
 

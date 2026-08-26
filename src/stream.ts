@@ -82,6 +82,20 @@ export interface KiroRequest {
 	agentMode: "vibe";
 }
 
+
+export interface KiroMetering {
+	value: number;
+	unit: string;
+	unitPlural: string;
+}
+
+const meteringByMessageTimestamp = new Map<number, KiroMetering>();
+
+export function consumeKiroMetering(timestamp: number): KiroMetering | undefined {
+	const metering = meteringByMessageTimestamp.get(timestamp);
+	meteringByMessageTimestamp.delete(timestamp);
+	return metering;
+}
 type KiroEvent =
 	| { type: "content"; data: string }
 	| { type: "thinkingText"; data: string }
@@ -94,6 +108,7 @@ type KiroEvent =
 	| { type: "toolUseStop"; data: { stop: boolean } }
 	| { type: "contextUsage"; data: { contextUsagePercentage: number } }
 	| { type: "usage"; data: { inputTokens?: number; outputTokens?: number } }
+	| { type: "metering"; data: KiroMetering }
 	| { type: "error"; data: { error: string; message?: string } };
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -150,6 +165,23 @@ export function parseKiroEvent(payload: unknown): KiroEvent | undefined {
 		return {
 			type: "contextUsage",
 			data: { contextUsagePercentage: parsed.contextUsagePercentage },
+		};
+	}
+	if (
+		typeof parsed.usage === "number" &&
+		Number.isFinite(parsed.usage) &&
+		typeof parsed.unit === "string"
+	) {
+		return {
+			type: "metering",
+			data: {
+				value: parsed.usage,
+				unit: parsed.unit,
+				unitPlural:
+					typeof parsed.unitPlural === "string"
+						? parsed.unitPlural
+						: `${parsed.unit}s`,
+			},
 		};
 	}
 	const rawUsage = asRecord(parsed.usage);
@@ -812,6 +844,7 @@ export function streamKiro(
 			let usageEvent:
 				| { inputTokens?: number; outputTokens?: number }
 				| undefined;
+			let meteringEvent: KiroMetering | undefined;
 			for await (const frame of decodeKiroEventStream(
 				response.body as ReadableStream<Uint8Array>,
 			)) {
@@ -824,6 +857,14 @@ export function streamKiro(
 				}
 				const event = parseKiroEvent(payload);
 				if (!event) continue;
+				if (
+					output.ttft === undefined &&
+					(event.type === "content" ||
+						event.type === "thinkingText" ||
+						event.type === "toolUse")
+				) {
+					output.ttft = Date.now() - output.timestamp;
+				}
 				switch (event.type) {
 					case "content":
 						endThinking(output, stream, thinkingState);
@@ -891,6 +932,9 @@ export function streamKiro(
 					case "usage":
 						usageEvent = event.data;
 						break;
+					case "metering":
+						meteringEvent = event.data;
+						break;
 					case "error":
 						throw new Error(
 							`Kiro API stream error: ${event.data.error}${event.data.message ? `: ${event.data.message}` : ""}`,
@@ -902,10 +946,36 @@ export function streamKiro(
 			endThinking(output, stream, thinkingState);
 			endText(output, stream, textState);
 			output.usage.input = usageEvent?.inputTokens ?? output.usage.input;
-			output.usage.output = usageEvent?.outputTokens ?? 0;
-			output.usage.totalTokens = output.usage.input + output.usage.output;
+			const estimatedOutputText = output.content
+				.map((block) => {
+					if (block.type === "text") return block.text;
+					if (block.type === "thinking") return block.thinking;
+					if (block.type === "toolCall")
+						return `${block.name}${JSON.stringify(block.arguments)}`;
+					return "";
+				})
+				.join("");
+			output.usage.output =
+				usageEvent?.outputTokens ??
+				(estimatedOutputText
+					? Math.max(
+							1,
+							Math.ceil(
+								new TextEncoder().encode(estimatedOutputText).length / 4,
+							),
+						)
+					: 0);
 			if (!receivedContextUsage && output.usage.input === 0)
 				output.usage.input = context.messages.length;
+			output.usage.totalTokens = output.usage.input + output.usage.output;
+			output.duration = Date.now() - output.timestamp;
+			if (meteringEvent) {
+				if (meteringByMessageTimestamp.size >= 32) {
+					const oldest = meteringByMessageTimestamp.keys().next().value;
+					if (oldest !== undefined) meteringByMessageTimestamp.delete(oldest);
+				}
+				meteringByMessageTimestamp.set(output.timestamp, meteringEvent);
+			}
 			output.stopReason = emittedToolCalls > 0 ? "toolUse" : "stop";
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 		} catch (error) {
