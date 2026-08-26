@@ -1,6 +1,7 @@
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
+	ExtensionUIContext,
 } from "@oh-my-pi/pi-coding-agent";
 import { createKiroProviderConfig, KIRO_PROVIDER_ID } from "./provider.ts";
 import { resolveKiroApiRegion } from "./shared.ts";
@@ -29,6 +30,21 @@ function redactKiroCredentials(
 function formatMeteredCredits(value: number): string {
 	const precision = value < 0.01 ? 6 : 3;
 	return value.toFixed(precision).replace(/\.?0+$/, "");
+}
+
+export function setKiroMeteringStatus(
+	ui: ExtensionUIContext,
+	text: string,
+): void {
+	if (
+		"setStatusLine" in ui &&
+		typeof ui.setStatusLine === "function"
+	) {
+		ui.setStatusLine("kiro-credits", text);
+		ui.setStatus("kiro-credits", undefined);
+		return;
+	}
+	ui.setStatus("kiro-credits", text);
 }
 
 /** Handler for /kiro-usage: fetches and displays the Kiro credits snapshot. */
@@ -80,8 +96,8 @@ export default function registerKiro(pi: ExtensionAPI): void {
 		const sessionId = ctx.sessionManager.getSessionId();
 		const total = (creditsBySession.get(sessionId) ?? 0) + metering.value;
 		creditsBySession.set(sessionId, total);
-		ctx.ui.setStatus(
-			"kiro-credits",
+		setKiroMeteringStatus(
+			ctx.ui,
 			`Kiro ${formatMeteredCredits(metering.value)} credits · Σ ${formatMeteredCredits(total)}`,
 		);
 	});

@@ -96,6 +96,17 @@ export function consumeKiroMetering(timestamp: number): KiroMetering | undefined
 	meteringByMessageTimestamp.delete(timestamp);
 	return metering;
 }
+
+export function recordKiroMetering(
+	timestamp: number,
+	metering: KiroMetering,
+): void {
+	if (meteringByMessageTimestamp.size >= 32) {
+		const oldest = meteringByMessageTimestamp.keys().next().value;
+		if (oldest !== undefined) meteringByMessageTimestamp.delete(oldest);
+	}
+	meteringByMessageTimestamp.set(timestamp, metering);
+}
 type KiroEvent =
 	| { type: "content"; data: string }
 	| { type: "thinkingText"; data: string }
@@ -969,13 +980,7 @@ export function streamKiro(
 				output.usage.input = context.messages.length;
 			output.usage.totalTokens = output.usage.input + output.usage.output;
 			output.duration = Date.now() - output.timestamp;
-			if (meteringEvent) {
-				if (meteringByMessageTimestamp.size >= 32) {
-					const oldest = meteringByMessageTimestamp.keys().next().value;
-					if (oldest !== undefined) meteringByMessageTimestamp.delete(oldest);
-				}
-				meteringByMessageTimestamp.set(output.timestamp, meteringEvent);
-			}
+			if (meteringEvent) recordKiroMetering(output.timestamp, meteringEvent);
 			output.stopReason = emittedToolCalls > 0 ? "toolUse" : "stop";
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 		} catch (error) {

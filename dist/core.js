@@ -790,6 +790,14 @@ function consumeKiroMetering(timestamp) {
   meteringByMessageTimestamp.delete(timestamp);
   return metering;
 }
+function recordKiroMetering(timestamp, metering) {
+  if (meteringByMessageTimestamp.size >= 32) {
+    const oldest = meteringByMessageTimestamp.keys().next().value;
+    if (oldest !== undefined)
+      meteringByMessageTimestamp.delete(oldest);
+  }
+  meteringByMessageTimestamp.set(timestamp, metering);
+}
 function asRecord2(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
 }
@@ -1407,14 +1415,8 @@ function streamKiro(model, context, options = {}) {
         output.usage.input = context.messages.length;
       output.usage.totalTokens = output.usage.input + output.usage.output;
       output.duration = Date.now() - output.timestamp;
-      if (meteringEvent) {
-        if (meteringByMessageTimestamp.size >= 32) {
-          const oldest = meteringByMessageTimestamp.keys().next().value;
-          if (oldest !== undefined)
-            meteringByMessageTimestamp.delete(oldest);
-        }
-        meteringByMessageTimestamp.set(output.timestamp, meteringEvent);
-      }
+      if (meteringEvent)
+        recordKiroMetering(output.timestamp, meteringEvent);
       output.stopReason = emittedToolCalls > 0 ? "toolUse" : "stop";
       stream.push({ type: "done", reason: output.stopReason, message: output });
     } catch (error) {
@@ -1617,6 +1619,7 @@ export {
   streamKiro,
   resolveKiroProfileArn,
   resolveKiroApiRegion,
+  recordKiroMetering,
   parseStructuredApiKey,
   parseKiroEvent,
   mapKiroCatalogToProviderModelConfigs,

@@ -60,6 +60,7 @@ export interface KiroMetering {
     unitPlural: string;
 }
 export declare function consumeKiroMetering(timestamp: number): KiroMetering | undefined;
+export declare function recordKiroMetering(timestamp: number, metering: KiroMetering): void;
 type KiroEvent = {
     type: "content";
     data: string;

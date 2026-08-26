@@ -793,6 +793,14 @@ function consumeKiroMetering(timestamp) {
   meteringByMessageTimestamp.delete(timestamp);
   return metering;
 }
+function recordKiroMetering(timestamp, metering) {
+  if (meteringByMessageTimestamp.size >= 32) {
+    const oldest = meteringByMessageTimestamp.keys().next().value;
+    if (oldest !== undefined)
+      meteringByMessageTimestamp.delete(oldest);
+  }
+  meteringByMessageTimestamp.set(timestamp, metering);
+}
 function asRecord2(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
 }
@@ -1410,14 +1418,8 @@ function streamKiro(model, context, options = {}) {
         output.usage.input = context.messages.length;
       output.usage.totalTokens = output.usage.input + output.usage.output;
       output.duration = Date.now() - output.timestamp;
-      if (meteringEvent) {
-        if (meteringByMessageTimestamp.size >= 32) {
-          const oldest = meteringByMessageTimestamp.keys().next().value;
-          if (oldest !== undefined)
-            meteringByMessageTimestamp.delete(oldest);
-        }
-        meteringByMessageTimestamp.set(output.timestamp, meteringEvent);
-      }
+      if (meteringEvent)
+        recordKiroMetering(output.timestamp, meteringEvent);
       output.stopReason = emittedToolCalls > 0 ? "toolUse" : "stop";
       stream.push({ type: "done", reason: output.stopReason, message: output });
     } catch (error) {
@@ -1629,6 +1631,14 @@ function formatMeteredCredits(value) {
   const precision = value < 0.01 ? 6 : 3;
   return value.toFixed(precision).replace(/\.?0+$/, "");
 }
+function setKiroMeteringStatus(ui, text) {
+  if ("setStatusLine" in ui && typeof ui.setStatusLine === "function") {
+    ui.setStatusLine("kiro-credits", text);
+    ui.setStatus("kiro-credits", undefined);
+    return;
+  }
+  ui.setStatus("kiro-credits", text);
+}
 async function handleKiroUsageCommand(_args, ctx) {
   let structured;
   try {
@@ -1665,10 +1675,11 @@ function registerKiro(pi) {
     const sessionId = ctx.sessionManager.getSessionId();
     const total = (creditsBySession.get(sessionId) ?? 0) + metering.value;
     creditsBySession.set(sessionId, total);
-    ctx.ui.setStatus("kiro-credits", `Kiro ${formatMeteredCredits(metering.value)} credits · Σ ${formatMeteredCredits(total)}`);
+    setKiroMeteringStatus(ctx.ui, `Kiro ${formatMeteredCredits(metering.value)} credits · Σ ${formatMeteredCredits(total)}`);
   });
 }
 export {
+  setKiroMeteringStatus,
   kiroUsageProvider,
   handleKiroUsageCommand,
   registerKiro as default,
