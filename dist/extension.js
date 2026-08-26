@@ -787,6 +787,12 @@ async function* decodeKiroEventStream(source) {
 var EMPTY_CONTENT_PLACEHOLDER = "Please proceed with the task.";
 var TOOL_RESULT_LIMIT = 250000;
 var USER_AGENT2 = "omp-kiro/1.0";
+function isInvalidToolUseFormatMessage(message) {
+  return message.trim().toLowerCase().replace(/\.+$/, "") === "invalid tool use format";
+}
+function firstKiroErrorMessage(body) {
+  return body ? [body.message, body.reason, body.error].find((value) => typeof value === "string" && value.trim().length > 0) : undefined;
+}
 var meteringByMessageTimestamp = new Map;
 function consumeKiroMetering(timestamp) {
   const metering = meteringByMessageTimestamp.get(timestamp);
@@ -1284,38 +1290,54 @@ function streamKiro(model, context, options = {}) {
       const request = buildKiroRequest(model, context, profileArn, simpleOptions.sessionId ?? crypto.randomUUID(), simpleOptions.reasoning);
       const payload = await options.onPayload?.(request, model) ?? request;
       const endpoint = new URL("generateAssistantResponse", `https://runtime.${region}.kiro.dev/`).toString();
-      const requestId = crypto.randomUUID();
-      const userAgent = `${USER_AGENT2} ${requestId}`;
-      const response = await fetchFn(endpoint, {
-        method: "POST",
-        headers: {
-          ...model.headers ?? {},
-          ...options.headers ?? {},
-          "Content-Type": "application/json",
-          Accept: "application/vnd.amazon.eventstream",
-          Authorization: `Bearer ${structured.token}`,
-          "x-amzn-kiro-profile-arn": profileArn,
-          "x-amzn-codewhisperer-optout": "true",
-          "amz-sdk-invocation-id": requestId,
-          "amz-sdk-request": "attempt=1; max=1",
-          "x-amzn-kiro-agent-mode": "vibe",
-          "x-amz-user-agent": userAgent,
-          "user-agent": userAgent
-        },
-        body: JSON.stringify(payload),
-        signal: options.signal
-      });
+      const requestBody = JSON.stringify(payload);
+      const post = (requestId) => {
+        const userAgent = `${USER_AGENT2} ${requestId}`;
+        return fetchFn(endpoint, {
+          method: "POST",
+          headers: {
+            ...model.headers ?? {},
+            ...options.headers ?? {},
+            "Content-Type": "application/json",
+            Accept: "application/vnd.amazon.eventstream",
+            Authorization: `Bearer ${structured.token}`,
+            "x-amzn-kiro-profile-arn": profileArn,
+            "x-amzn-codewhisperer-optout": "true",
+            "amz-sdk-invocation-id": requestId,
+            "amz-sdk-request": "attempt=1; max=1",
+            "x-amzn-kiro-agent-mode": "vibe",
+            "x-amz-user-agent": userAgent,
+            "user-agent": userAgent
+          },
+          body: requestBody,
+          signal: options.signal
+        });
+      };
+      let response = await post(crypto.randomUUID());
       if (!response.ok) {
-        output.errorStatus = response.status;
-        let detail = "";
+        let body;
         try {
-          const body = await response.json();
-          const candidate = [body.message, body.reason, body.error].find((value) => typeof value === "string" && value.trim().length > 0);
-          if (candidate) {
-            detail = candidate.replace(/\s+/g, " ").split(structured.token).join("[redacted]").split(profileArn).join("[redacted]").slice(0, 300);
-          }
+          body = await response.json();
         } catch {}
-        throw new Error(`Kiro API request failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+        const candidate = firstKiroErrorMessage(body);
+        if (response.status === 400 && !options.signal?.aborted && candidate !== undefined && isInvalidToolUseFormatMessage(candidate)) {
+          response = await post(crypto.randomUUID());
+          body = undefined;
+          if (!response.ok) {
+            try {
+              body = await response.json();
+            } catch {}
+          }
+        }
+        if (!response.ok) {
+          output.errorStatus = response.status;
+          let detail = "";
+          const finalCandidate = firstKiroErrorMessage(body);
+          if (finalCandidate) {
+            detail = finalCandidate.replace(/\s+/g, " ").split(structured.token).join("[redacted]").split(profileArn).join("[redacted]").slice(0, 300);
+          }
+          throw new Error(`Kiro API request failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+        }
       }
       if (!response.body)
         throw new Error("Kiro API returned no event stream body");

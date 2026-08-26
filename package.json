@@ -1,6 +1,6 @@
 {
 	"name": "omp-kiro",
-	"version": "1.2.4",
+	"version": "1.2.5",
 	"description": "Kiro OAuth, credits usage, model discovery, and streaming runtime for Oh My Pi.",
 	"type": "module",
 	"license": "MIT",

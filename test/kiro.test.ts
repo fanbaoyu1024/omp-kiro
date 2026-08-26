@@ -848,10 +848,84 @@ describe("Kiro EventStream and runtime", () => {
 					),
 			},
 		).result();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorStatus).toBe(400);
+		expect(result.errorMessage).toContain("not supported for this profile");
+	});
+
+	it("retries a transient Invalid tool use format 400 once with the same payload and a fresh request ID", async () => {
+		const requests: Array<{ url: string; init?: RequestInit }> = [];
+		const responseBody = concatFrames([
+			eventStreamFrame(JSON.stringify({ content: "recovered" })),
+		]);
+		const fetchMock: FetchImpl = async (input, init) => {
+			requests.push({ url: String(input), init });
+			if (requests.length === 1)
+				return jsonResponse({ message: "Invalid tool use format." }, 400);
+			return new Response(responseBody, { status: 200 });
+		};
+		const result = await streamKiro(
+			kiroModel(),
+			{ messages: [{ role: "user", content: "Current", timestamp: 1 }] },
+			{
+				apiKey: JSON.stringify({
+					token: "access-fixture",
+					region: "us-east-1",
+					profileArn: "profile-fixture",
+				}),
+				fetch: fetchMock,
+				sessionId: "conversation-fixture",
+			},
+		).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.content).toEqual([{ type: "text", text: "recovered" }]);
+		expect(requests).toHaveLength(2);
+		expect(requests[0]?.url).toBe(requests[1]?.url);
+		expect(String(requests[0]?.init?.body)).toBe(
+			String(requests[1]?.init?.body),
+		);
+		const firstRequestId = new Headers(requests[0]?.init?.headers).get(
+			"amz-sdk-invocation-id",
+		);
+		const retryRequestId = new Headers(requests[1]?.init?.headers).get(
+			"amz-sdk-invocation-id",
+		);
+		expect(firstRequestId).toBeTruthy();
+		expect(retryRequestId).toBeTruthy();
+		expect(firstRequestId).not.toBe(retryRequestId);
+		expect(new Headers(requests[1]?.init?.headers).get("user-agent")).toBe(
+			`omp-kiro/1.0 ${retryRequestId}`,
+		);
+	});
+
+	it("does not retry an ordinary runtime 400 and surfaces its message", async () => {
+		let calls = 0;
+		const fetchMock: FetchImpl = async () => {
+			calls += 1;
+			return jsonResponse(
+				{ message: "The selected model is not supported for this profile" },
+				400,
+			);
+		};
+		const result = await streamKiro(
+			kiroModel({ id: "retired-model" }),
+			{ messages: [{ role: "user", content: "Current", timestamp: 1 }] },
+			{
+				apiKey: JSON.stringify({
+					token: "access-fixture",
+					region: "us-east-1",
+					profileArn: "profile-fixture",
+				}),
+				fetch: fetchMock,
+			},
+		).result();
 
 		expect(result.stopReason).toBe("error");
 		expect(result.errorStatus).toBe(400);
 		expect(result.errorMessage).toContain("not supported for this profile");
+		expect(calls).toBe(1);
 	});
 
 	it("emits an error event when no credentials are configured", async () => {

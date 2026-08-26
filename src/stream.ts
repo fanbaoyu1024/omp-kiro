@@ -34,7 +34,37 @@ import {
 
 const EMPTY_CONTENT_PLACEHOLDER = "Please proceed with the task.";
 const TOOL_RESULT_LIMIT = 250_000;
+
 const USER_AGENT = "omp-kiro/1.0";
+
+interface KiroErrorBody {
+	message?: unknown;
+	reason?: unknown;
+	error?: unknown;
+}
+
+/**
+ * Kiro's transient fleet rejection message. Matched after trimming and
+ * normalizing case and trailing punctuation: `Invalid tool use format.`
+ * and variants such as `invalid tool use format`.
+ */
+function isInvalidToolUseFormatMessage(message: string): boolean {
+	return (
+		message.trim().toLowerCase().replace(/\.+$/, "") ===
+		"invalid tool use format"
+	);
+}
+
+function firstKiroErrorMessage(
+	body: KiroErrorBody | undefined,
+): string | undefined {
+	return body
+		? [body.message, body.reason, body.error].find(
+				(value): value is string =>
+					typeof value === "string" && value.trim().length > 0,
+			)
+		: undefined;
+}
 
 export interface KiroUserInputMessage {
 	content: string;
@@ -792,42 +822,62 @@ export function streamKiro(
 				"generateAssistantResponse",
 				`https://runtime.${region}.kiro.dev/`,
 			).toString();
-			const requestId = crypto.randomUUID();
-			const userAgent = `${USER_AGENT} ${requestId}`;
-			const response = await fetchFn(endpoint, {
-				method: "POST",
-				headers: {
-					...(model.headers ?? {}),
-					...(options.headers ?? {}),
-					"Content-Type": "application/json",
-					Accept: "application/vnd.amazon.eventstream",
-					Authorization: `Bearer ${structured.token}`,
-					"x-amzn-kiro-profile-arn": profileArn,
-					"x-amzn-codewhisperer-optout": "true",
-					"amz-sdk-invocation-id": requestId,
-					"amz-sdk-request": "attempt=1; max=1",
-					"x-amzn-kiro-agent-mode": "vibe",
-					"x-amz-user-agent": userAgent,
-					"user-agent": userAgent,
-				},
-				body: JSON.stringify(payload),
-				signal: options.signal,
-			});
+			const requestBody = JSON.stringify(payload);
+			const post = (requestId: string): Promise<Response> => {
+				const userAgent = `${USER_AGENT} ${requestId}`;
+				return fetchFn(endpoint, {
+					method: "POST",
+					headers: {
+						...(model.headers ?? {}),
+						...(options.headers ?? {}),
+						"Content-Type": "application/json",
+						Accept: "application/vnd.amazon.eventstream",
+						Authorization: `Bearer ${structured.token}`,
+						"x-amzn-kiro-profile-arn": profileArn,
+						"x-amzn-codewhisperer-optout": "true",
+						"amz-sdk-invocation-id": requestId,
+						"amz-sdk-request": "attempt=1; max=1",
+						"x-amzn-kiro-agent-mode": "vibe",
+						"x-amz-user-agent": userAgent,
+						"user-agent": userAgent,
+					},
+					body: requestBody,
+					signal: options.signal,
+				});
+			};
+			let response = await post(crypto.randomUUID());
 			if (!response.ok) {
-				output.errorStatus = response.status;
-				let detail = "";
+				let body: KiroErrorBody | undefined;
 				try {
-					const body = (await response.json()) as {
-						message?: unknown;
-						reason?: unknown;
-						error?: unknown;
-					};
-					const candidate = [body.message, body.reason, body.error].find(
-						(value): value is string =>
-							typeof value === "string" && value.trim().length > 0,
-					);
-					if (candidate) {
-						detail = candidate
+					body = (await response.json()) as KiroErrorBody;
+				} catch {
+					// Some runtime errors return an empty or non-JSON body.
+				}
+				const candidate = firstKiroErrorMessage(body);
+				if (
+					response.status === 400 &&
+					!options.signal?.aborted &&
+					candidate !== undefined &&
+					isInvalidToolUseFormatMessage(candidate)
+				) {
+					// Transient fleet rejection: retry once with the identical
+					// payload but a fresh request ID and user agent.
+					response = await post(crypto.randomUUID());
+					body = undefined;
+					if (!response.ok) {
+						try {
+							body = (await response.json()) as KiroErrorBody;
+						} catch {
+							// Some runtime errors return an empty or non-JSON body.
+						}
+					}
+				}
+				if (!response.ok) {
+					output.errorStatus = response.status;
+					let detail = "";
+					const finalCandidate = firstKiroErrorMessage(body);
+					if (finalCandidate) {
+						detail = finalCandidate
 							.replace(/\s+/g, " ")
 							.split(structured.token)
 							.join("[redacted]")
@@ -835,12 +885,10 @@ export function streamKiro(
 							.join("[redacted]")
 							.slice(0, 300);
 					}
-				} catch {
-					// Some runtime errors return an empty or non-JSON body.
+					throw new Error(
+						`Kiro API request failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+					);
 				}
-				throw new Error(
-					`Kiro API request failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
-				);
 			}
 			if (!response.body)
 				throw new Error("Kiro API returned no event stream body");
