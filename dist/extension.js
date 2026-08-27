@@ -1643,6 +1643,25 @@ function createKiroProviderConfig() {
 
 // src/extension.ts
 var KIRO_USAGE_COMMAND = "kiro-usage";
+var KIRO_CREDIT_ENTRY_TYPE = "kiro-credit-metering";
+function isCreditMeteringEntry(entry) {
+  if (entry.type !== "custom" || entry.customType !== KIRO_CREDIT_ENTRY_TYPE) {
+    return false;
+  }
+  const data = entry.data;
+  if (!data || typeof data !== "object")
+    return false;
+  const record = data;
+  return typeof record.credits === "number" && Number.isFinite(record.credits) && record.credits >= 0 && record.unit === "credit";
+}
+function sumBranchCredits(entries) {
+  let total = 0;
+  for (const entry of entries) {
+    if (isCreditMeteringEntry(entry))
+      total += entry.data.credits;
+  }
+  return total;
+}
 function redactKiroCredentials(message, structured) {
   if (!structured)
     return message;
@@ -1687,6 +1706,12 @@ function registerKiro(pi) {
     handler: handleKiroUsageCommand
   });
   const creditsBySession = new Map;
+  pi.on("session_start", (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const total = sumBranchCredits(ctx.sessionManager.getBranch());
+    creditsBySession.set(sessionId, total);
+    setKiroMeteringStatus(ctx.ui, total > 0 ? `Kiro Σ ${formatMeteredCredits(total)} credits` : undefined);
+  });
   pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant" || event.message.provider !== KIRO_PROVIDER_ID) {
       return;
@@ -1694,9 +1719,15 @@ function registerKiro(pi) {
     const metering = consumeKiroMetering(event.message.timestamp);
     if (!metering || metering.unit.toLowerCase() !== "credit")
       return;
+    if (!Number.isFinite(metering.value) || metering.value < 0)
+      return;
     const sessionId = ctx.sessionManager.getSessionId();
     const total = (creditsBySession.get(sessionId) ?? 0) + metering.value;
     creditsBySession.set(sessionId, total);
+    pi.appendEntry(KIRO_CREDIT_ENTRY_TYPE, {
+      credits: metering.value,
+      unit: "credit"
+    });
     setKiroMeteringStatus(ctx.ui, `Kiro ${formatMeteredCredits(metering.value)} credits · Σ ${formatMeteredCredits(total)}`);
   });
 }
@@ -1707,5 +1738,6 @@ export {
   registerKiro as default,
   createKiroProviderConfig,
   KIRO_USAGE_COMMAND,
-  KIRO_PROVIDER_ID
+  KIRO_PROVIDER_ID,
+  KIRO_CREDIT_ENTRY_TYPE
 };

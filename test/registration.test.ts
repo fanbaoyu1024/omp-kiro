@@ -1,12 +1,68 @@
-import { describe, expect, it, vi } from "bun:test";
+import { describe, expect, it, vi, type Mock } from "bun:test";
 import registerKiro, {
 	handleKiroUsageCommand,
+	KIRO_CREDIT_ENTRY_TYPE,
 	KIRO_USAGE_COMMAND,
 	setKiroMeteringStatus,
 } from "../src/extension.ts";
 import { createKiroProviderConfig, KIRO_PROVIDER_ID } from "../src/provider.ts";
 import { recordKiroMetering } from "../src/stream.ts";
 import { kiroUsageProvider } from "../src/usage.ts";
+
+/** A persisted credit charge as the host would return it from getBranch(). */
+function creditEntry(credits: number, unit: string = "credit") {
+	return {
+		type: "custom",
+		customType: KIRO_CREDIT_ENTRY_TYPE,
+		data: { credits, unit },
+	};
+}
+
+/** The message_end handler registered by the extension. */
+function endHandler(
+	on: Mock,
+): (
+	event: {
+		message: { role: string; provider: string; timestamp: number };
+	},
+	ctx: {
+		sessionManager: { getSessionId(): string };
+		ui: {
+			setStatus(key: string, text: string | undefined): void;
+			setStatusLine(key: string, text: string | undefined): void;
+		};
+	},
+) => void {
+	return on.mock.calls.find(([name]) => name === "message_end")?.[1] as (
+		event: {
+			message: { role: string; provider: string; timestamp: number };
+		},
+		ctx: {
+			sessionManager: { getSessionId(): string };
+			ui: {
+				setStatus(key: string, text: string | undefined): void;
+				setStatusLine(key: string, text: string | undefined): void;
+			};
+		},
+	) => void;
+}
+
+/** The session_start handler registered by the extension. */
+function startHandler(on: Mock) {
+	return on.mock.calls.find(([name]) => name === "session_start")?.[1] as (
+		event: unknown,
+		ctx: {
+			sessionManager: {
+				getSessionId(): string;
+				getBranch(): unknown[];
+			};
+			ui: {
+				setStatus(key: string, text: string | undefined): void;
+				setStatusLine(key: string, text: string | undefined): void;
+			};
+		},
+	) => void;
+}
 
 describe("omp extension registration", () => {
 	it("registers the kiro provider with a two-argument registerProvider call", () => {
@@ -130,11 +186,13 @@ describe("Kiro metering status placement", () => {
 		);
 	});
 
-	it("accumulates native credits per session", () => {
+	it("accumulates native credits per session and persists each charge once", () => {
 		const on = vi.fn();
+		const appendEntry = vi.fn();
 		registerKiro({
 			registerProvider: vi.fn(),
 			registerCommand: vi.fn(),
+			appendEntry,
 			on,
 		} as never);
 		const handler = on.mock.calls.find(
@@ -184,6 +242,317 @@ describe("Kiro metering status placement", () => {
 		expect(setStatusLine).toHaveBeenLastCalledWith(
 			"kiro-credits",
 			"Kiro 0.2 credits · Σ 0.3",
+		);
+		expect(appendEntry).toHaveBeenCalledTimes(2);
+		expect(appendEntry).toHaveBeenNthCalledWith(
+			1,
+			KIRO_CREDIT_ENTRY_TYPE,
+			{ credits: 0.1, unit: "credit" },
+		);
+		expect(appendEntry).toHaveBeenNthCalledWith(
+			2,
+			KIRO_CREDIT_ENTRY_TYPE,
+			{ credits: 0.2, unit: "credit" },
+		);
+	});
+
+	it("clears the metering status when the resumed branch has no charges", () => {
+		const on = vi.fn();
+		registerKiro({
+			registerProvider: vi.fn(),
+			registerCommand: vi.fn(),
+			appendEntry: vi.fn(),
+			on,
+		} as never);
+		const setStatus = vi.fn();
+		const setStatusLine = vi.fn();
+
+		startHandler(on)(
+			{ type: "session_start" },
+			{
+				sessionManager: {
+					getSessionId: () => "empty-session",
+					getBranch: () => [],
+				},
+				ui: { setStatus, setStatusLine },
+			},
+		);
+
+		expect(setStatusLine).toHaveBeenCalledWith(
+			"kiro-credits",
+			undefined,
+		);
+		expect(setStatus).toHaveBeenCalledWith("kiro-credits", undefined);
+	});
+
+	it("restores the accumulated total from persisted entries on session_start", () => {
+		// First extension instance meters two messages and persists each charge.
+		const persisted: Array<{
+			type: string;
+			customType: string;
+			data: { credits: number; unit: string };
+		}> = [];
+		const firstOn = vi.fn();
+		registerKiro({
+			registerProvider: vi.fn(),
+			registerCommand: vi.fn(),
+			appendEntry: (_type: string, data: { credits: number; unit: string }) => {
+				persisted.push({
+					type: "custom",
+					customType: KIRO_CREDIT_ENTRY_TYPE,
+					data,
+				});
+			},
+			on: firstOn,
+		} as never);
+		const firstEnd = endHandler(firstOn);
+		const firstUi = { setStatus: vi.fn(), setStatusLine: vi.fn() };
+		const firstCtx = {
+			sessionManager: { getSessionId: () => "session-resume" },
+			ui: firstUi,
+		};
+		recordKiroMetering(301, {
+			value: 0.1,
+			unit: "credit",
+			unitPlural: "credits",
+		});
+		firstEnd(
+			{ message: { role: "assistant", provider: "kiro", timestamp: 301 } },
+			firstCtx,
+		);
+		recordKiroMetering(302, {
+			value: 0.2,
+			unit: "credit",
+			unitPlural: "credits",
+		});
+		firstEnd(
+			{ message: { role: "assistant", provider: "kiro", timestamp: 302 } },
+			firstCtx,
+		);
+		expect(persisted).toHaveLength(2);
+
+		// A fresh extension instance (OMP restart / session resume) rebuilds
+		// the total from the persisted branch on session_start.
+		const resumedOn = vi.fn();
+		const resumedAppend = vi.fn();
+		const resumedSetStatus = vi.fn();
+		const resumedSetStatusLine = vi.fn();
+		registerKiro({
+			registerProvider: vi.fn(),
+			registerCommand: vi.fn(),
+			appendEntry: resumedAppend,
+			on: resumedOn,
+		} as never);
+		startHandler(resumedOn)(
+			{ type: "session_start" },
+			{
+				sessionManager: {
+					getSessionId: () => "session-resume",
+					getBranch: () => persisted,
+				},
+				ui: {
+					setStatus: resumedSetStatus,
+					setStatusLine: resumedSetStatusLine,
+				},
+			},
+		);
+		expect(resumedSetStatusLine).toHaveBeenLastCalledWith(
+			"kiro-credits",
+			"Kiro Σ 0.3 credits",
+		);
+
+		// Metering continues on top of the restored total, appending once.
+		recordKiroMetering(303, {
+			value: 0.4,
+			unit: "credit",
+			unitPlural: "credits",
+		});
+		endHandler(resumedOn)(
+			{ message: { role: "assistant", provider: "kiro", timestamp: 303 } },
+			{
+				sessionManager: { getSessionId: () => "session-resume" },
+				ui: {
+					setStatus: resumedSetStatus,
+					setStatusLine: resumedSetStatusLine,
+				},
+			},
+		);
+		expect(resumedSetStatusLine).toHaveBeenLastCalledWith(
+			"kiro-credits",
+			"Kiro 0.4 credits · Σ 0.7",
+		);
+		expect(resumedAppend).toHaveBeenCalledTimes(1);
+	});
+
+	it("session_start aggregates only the current branch path", () => {
+		const on = vi.fn();
+		registerKiro({
+			registerProvider: vi.fn(),
+			registerCommand: vi.fn(),
+			appendEntry: vi.fn(),
+			on,
+		} as never);
+		const setStatus = vi.fn();
+		const setStatusLine = vi.fn();
+		const getEntries = vi.fn();
+		startHandler(on)(
+			{ type: "session_start" },
+			{
+				sessionManager: {
+					getSessionId: () => "session-branch",
+					// Current leaf path only: the 0.5 charge sits on an
+					// abandoned branch and must never be counted.
+					getBranch: () => [creditEntry(0.1), creditEntry(0.2)],
+					getEntries,
+				},
+				ui: { setStatus, setStatusLine },
+			},
+		);
+		expect(getEntries).not.toHaveBeenCalled();
+		expect(setStatusLine).toHaveBeenLastCalledWith(
+			"kiro-credits",
+			"Kiro Σ 0.3 credits",
+		);
+
+		// New charges continue from the branch-restored total, not the
+		// abandoned branch's 0.5.
+		recordKiroMetering(401, {
+			value: 0.4,
+			unit: "credit",
+			unitPlural: "credits",
+		});
+		endHandler(on)(
+			{ message: { role: "assistant", provider: "kiro", timestamp: 401 } },
+			{
+				sessionManager: { getSessionId: () => "session-branch" },
+				ui: { setStatus, setStatusLine },
+			},
+		);
+		expect(setStatusLine).toHaveBeenLastCalledWith(
+			"kiro-credits",
+			"Kiro 0.4 credits · Σ 0.7",
+		);
+	});
+
+	it("session_start ignores malformed credit entries", () => {
+		const on = vi.fn();
+		registerKiro({
+			registerProvider: vi.fn(),
+			registerCommand: vi.fn(),
+			appendEntry: vi.fn(),
+			on,
+		} as never);
+		const setStatus = vi.fn();
+		const setStatusLine = vi.fn();
+		startHandler(on)(
+			{ type: "session_start" },
+			{
+				sessionManager: {
+					getSessionId: () => "session-malformed",
+					getBranch: () => [
+						{
+							type: "custom",
+							customType: KIRO_CREDIT_ENTRY_TYPE,
+							data: { credits: "0.1", unit: "credit" },
+						},
+						{
+							type: "custom",
+							customType: KIRO_CREDIT_ENTRY_TYPE,
+							data: { credits: -0.5, unit: "credit" },
+						},
+						{
+							type: "custom",
+							customType: KIRO_CREDIT_ENTRY_TYPE,
+							data: { credits: Number.NaN, unit: "credit" },
+						},
+						{
+							type: "custom",
+							customType: KIRO_CREDIT_ENTRY_TYPE,
+							data: {
+								credits: Number.POSITIVE_INFINITY,
+								unit: "credit",
+							},
+						},
+						{
+							type: "custom",
+							customType: KIRO_CREDIT_ENTRY_TYPE,
+							data: { credits: 0.3, unit: "tokens" },
+						},
+						{ type: "custom", customType: KIRO_CREDIT_ENTRY_TYPE },
+						{
+							type: "custom",
+							customType: "some-other-type",
+							data: { credits: 9, unit: "credit" },
+						},
+						{ type: "message" },
+						creditEntry(0.2),
+						creditEntry(0.1),
+					],
+				},
+				ui: { setStatus, setStatusLine },
+			},
+		);
+		expect(setStatusLine).toHaveBeenLastCalledWith(
+			"kiro-credits",
+			"Kiro Σ 0.3 credits",
+		);
+	});
+
+	it("keeps per-session totals isolated", () => {
+		const on = vi.fn();
+		registerKiro({
+			registerProvider: vi.fn(),
+			registerCommand: vi.fn(),
+			appendEntry: vi.fn(),
+			on,
+		} as never);
+		const end = endHandler(on);
+		const uiA = { setStatus: vi.fn(), setStatusLine: vi.fn() };
+		const uiB = { setStatus: vi.fn(), setStatusLine: vi.fn() };
+		const ctxA = {
+			sessionManager: { getSessionId: () => "session-a" },
+			ui: uiA,
+		};
+		const ctxB = {
+			sessionManager: { getSessionId: () => "session-b" },
+			ui: uiB,
+		};
+
+		recordKiroMetering(501, {
+			value: 0.1,
+			unit: "credit",
+			unitPlural: "credits",
+		});
+		end(
+			{ message: { role: "assistant", provider: "kiro", timestamp: 501 } },
+			ctxA,
+		);
+		recordKiroMetering(502, {
+			value: 0.5,
+			unit: "credit",
+			unitPlural: "credits",
+		});
+		end(
+			{ message: { role: "assistant", provider: "kiro", timestamp: 502 } },
+			ctxB,
+		);
+		recordKiroMetering(503, {
+			value: 0.2,
+			unit: "credit",
+			unitPlural: "credits",
+		});
+		end(
+			{ message: { role: "assistant", provider: "kiro", timestamp: 503 } },
+			ctxA,
+		);
+
+		expect(uiA.setStatusLine).toHaveBeenLastCalledWith(
+			"kiro-credits",
+			"Kiro 0.2 credits · Σ 0.3",
+		);
+		expect(uiB.setStatusLine).toHaveBeenLastCalledWith(
+			"kiro-credits",
+			"Kiro 0.5 credits · Σ 0.5",
 		);
 	});
 });
